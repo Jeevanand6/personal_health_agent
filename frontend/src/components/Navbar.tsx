@@ -45,6 +45,13 @@ export default function Navbar() {
             <LayoutDashboard className="w-4 h-4 text-teal-600" />
             Dashboard
           </Link>
+          <Link
+            href="/documents"
+            className="px-3.5 py-2 rounded-lg hover:text-slate-900 hover:bg-slate-100 transition-colors flex items-center gap-1.5"
+          >
+            <FileText className="w-4 h-4 text-teal-600" />
+            Documents
+          </Link>
           <a
             href="http://localhost:8000/docs"
             target="_blank"

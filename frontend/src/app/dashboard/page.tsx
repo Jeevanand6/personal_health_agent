@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -12,18 +13,27 @@ import {
   CheckCircle2,
   RefreshCw,
   LogOut,
-  User as UserIcon,
   Sparkles,
+  ArrowRight,
+  UploadCloud,
+  Eye,
 } from "lucide-react";
-import { fetchHealthStatus, HealthStatus } from "@/lib/api";
+import {
+  fetchHealthStatus,
+  HealthStatus,
+  getDocumentsApi,
+  MedicalDocument,
+} from "@/lib/api";
 
 export default function DashboardPage() {
-  const { user, isLoading, logout } = useAuth();
+  const { user, token, isLoading, logout } = useAuth();
   const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<"overview" | "documents" | "timeline">("overview");
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [testingHealth, setTestingHealth] = useState<boolean>(false);
+  const [documents, setDocuments] = useState<MedicalDocument[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState<boolean>(false);
 
   // Authentication Protection: Redirect unauthenticated users to /login
   useEffect(() => {
@@ -39,9 +49,25 @@ export default function DashboardPage() {
     setTestingHealth(false);
   };
 
+  const loadDocuments = async () => {
+    if (!token) return;
+    setIsLoadingDocs(true);
+    try {
+      const docs = await getDocumentsApi(token);
+      setDocuments(docs);
+    } catch (e) {
+      // Handled silently for dashboard summary
+    } finally {
+      setIsLoadingDocs(false);
+    }
+  };
+
   useEffect(() => {
     runHealthTest();
-  }, []);
+    if (token) {
+      loadDocuments();
+    }
+  }, [token]);
 
   // Display clean loading state while verifying session
   if (isLoading) {
@@ -57,7 +83,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Guard against unauthenticated render prior to redirect
   if (!user) {
     return null;
   }
@@ -139,21 +164,29 @@ export default function DashboardPage() {
 
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3">
+        <Link
+          href="/documents"
+          className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm hover:border-teal-400 transition-all space-y-3 group"
+        >
           <div className="flex items-center justify-between text-slate-400">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Uploaded Documents
             </span>
-            <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
+            <div className="p-2 rounded-xl bg-teal-50 text-teal-600 group-hover:scale-110 transition-transform">
               <FileText className="w-5 h-5" />
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-slate-900">0</span>
+            <span className="text-3xl font-extrabold text-slate-900">
+              {documents.length}
+            </span>
             <span className="text-xs text-slate-400">files</span>
           </div>
-          <p className="text-[11px] text-slate-500">Ready for Phase 3 document intake</p>
-        </div>
+          <p className="text-[11px] text-teal-600 font-semibold flex items-center gap-1">
+            <span>Manage records in /documents</span>
+            <ArrowRight className="w-3 h-3" />
+          </p>
+        </Link>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3">
           <div className="flex items-center justify-between text-slate-400">
@@ -230,7 +263,7 @@ export default function DashboardPage() {
             }`}
           >
             <FileText className="w-4 h-4" />
-            <span>Medical Records (0)</span>
+            <span>Medical Records ({documents.length})</span>
           </button>
           <button
             onClick={() => setActiveTab("timeline")}
@@ -257,30 +290,21 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <span className="text-[11px] font-mono bg-teal-50 text-teal-700 border border-teal-200 px-2 py-0.5 rounded">
-                  Authenticated Intake
+                  Phase 3 Active
                 </span>
               </div>
 
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-10 text-center hover:border-teal-400 transition-colors bg-slate-50/50 space-y-4">
-                <div className="w-14 h-14 rounded-2xl bg-teal-50 border border-teal-200/80 text-teal-600 mx-auto flex items-center justify-center">
-                  <svg
-                    className="w-7 h-7"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
-                    <path d="M12 12v9" />
-                    <path d="m16 16-4-4-4 4" />
-                  </svg>
+              <Link
+                href="/documents"
+                className="block border-2 border-dashed border-slate-200 hover:border-teal-400 rounded-2xl p-10 text-center transition-all bg-slate-50/50 space-y-4 group"
+              >
+                <div className="w-14 h-14 rounded-2xl bg-teal-50 group-hover:bg-teal-100 border border-teal-200/80 text-teal-600 mx-auto flex items-center justify-center transition-colors">
+                  <UploadCloud className="w-7 h-7" />
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-slate-800">
-                    Drag and drop your medical record here, or{" "}
-                    <span className="text-teal-600 underline cursor-pointer">browse files</span>
+                    Click here to open the{" "}
+                    <span className="text-teal-600 underline font-bold">Document Upload Center</span>
                   </p>
                   <p className="text-xs text-slate-500">
                     Supports Prescriptions, Lab Reports, Diagnostic Summaries & Discharge Cards
@@ -289,10 +313,10 @@ export default function DashboardPage() {
                 <div className="pt-2">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
                     <Shield className="w-3.5 h-3.5 text-amber-600" />
-                    Encrypted storage &bull; Local Docker Volume &bull; HIPAA/ABDM safeguards
+                    Encrypted storage &bull; Local Docker Volume &bull; Safe MIME validation
                   </span>
                 </div>
-              </div>
+              </Link>
             </div>
 
             {/* Session & Backend Diagnostics */}
@@ -308,9 +332,9 @@ export default function DashboardPage() {
                   <span className="font-mono font-semibold text-slate-800">{user.email}</span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                  <span className="text-slate-600">Role:</span>
-                  <span className="font-mono font-semibold uppercase text-teal-700">
-                    {user.role}
+                  <span className="text-slate-600">Total Documents:</span>
+                  <span className="font-mono font-semibold text-teal-700">
+                    {documents.length} files
                   </span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
@@ -318,10 +342,8 @@ export default function DashboardPage() {
                   <span className="font-mono font-semibold text-slate-700">Argon2id + JWT</span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                  <span className="text-slate-600">FastAPI API Status:</span>
-                  <span className="font-mono font-semibold text-emerald-700">
-                    {healthStatus?.status || "Checking..."}
-                  </span>
+                  <span className="text-slate-600">Storage Backend:</span>
+                  <span className="font-mono font-semibold text-slate-700">Docker Volume</span>
                 </div>
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                   <span className="text-slate-600">PostgreSQL Session:</span>
@@ -338,20 +360,72 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Tab Content 2: Real Documents */}
         {activeTab === "documents" && (
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center shadow-sm space-y-4">
-            <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-              <FileText className="w-6 h-6" />
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Your Indexed Documents</h3>
+                <p className="text-xs text-slate-500">Currently stored medical files</p>
+              </div>
+              <Link
+                href="/documents"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+              >
+                <span>Upload More Records</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
             </div>
-            <div className="space-y-1">
-              <h4 className="text-base font-semibold text-slate-900">No medical documents yet</h4>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Documents uploaded by {user.full_name} will be indexed and extracted here.
-              </p>
-            </div>
+
+            {documents.length === 0 ? (
+              <div className="text-center py-10 space-y-3">
+                <FileText className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-xs text-slate-500">
+                  No medical records found in your profile yet.
+                </p>
+                <Link
+                  href="/documents"
+                  className="inline-flex items-center gap-1 text-xs text-teal-600 font-bold underline"
+                >
+                  Upload your first prescription or lab test
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {documents.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="py-3.5 flex items-center justify-between gap-4"
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center shrink-0">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div className="truncate">
+                        <p className="text-xs font-bold text-slate-900 truncate">
+                          {doc.original_filename}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          {doc.document_type} &bull; {new Date(doc.upload_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Link
+                      href="/documents"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View</span>
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* Tab Content 3: Empty state for Timeline */}
         {activeTab === "timeline" && (
           <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center shadow-sm space-y-4">
             <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
@@ -360,7 +434,7 @@ export default function DashboardPage() {
             <div className="space-y-1">
               <h4 className="text-base font-semibold text-slate-900">Health timeline will appear here</h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Prescriptions and lab results will build a longitudinal journey for your profile.
+                Documents uploaded by {user.full_name} will automatically populate this longitudinal journey once OCR entity extraction is enabled.
               </p>
             </div>
           </div>

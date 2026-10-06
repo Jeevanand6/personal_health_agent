@@ -6,6 +6,13 @@ from app.schemas.auth import (
     PatientResponse,
     TokenResponse,
 )
+from app.schemas.document import (
+    DocumentType,
+    ProcessingStatus,
+    DocumentResponse,
+    DocumentListResponse,
+    DocumentUpdateRequest,
+)
 
 __all__ = [
     "HealthResponse",
@@ -14,4 +21,9 @@ __all__ = [
     "UserResponse",
     "PatientResponse",
     "TokenResponse",
+    "DocumentType",
+    "ProcessingStatus",
+    "DocumentResponse",
+    "DocumentListResponse",
+    "DocumentUpdateRequest",
 ]
