@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   ChevronDown,
+  Bot,
 } from "lucide-react";
 import HealthStatusBadge from "./HealthStatusBadge";
 import { useAuth } from "@/lib/auth-context";
@@ -66,6 +67,12 @@ export default function Navbar() {
       href: "/summary",
       label: t("nav", "summary", "AI Summary"),
       icon: Sparkles,
+      activeColor: "text-teal-600 bg-teal-50/80",
+    },
+    {
+      href: "/copilot",
+      label: isTamil ? "ஹெல்த் கோபைலட்" : "Copilot",
+      icon: Bot,
       activeColor: "text-teal-600 bg-teal-50/80",
     },
     {

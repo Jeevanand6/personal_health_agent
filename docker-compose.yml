@@ -35,10 +35,16 @@ services:
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
       STORAGE_BACKEND: local
       LOCAL_STORAGE_DIR: /app/storage_data
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-004}
     ports:
       - "8000:8000"
     volumes:
+      - ./backend:/app
       - storage_data:/app/storage_data
     depends_on:
       db:

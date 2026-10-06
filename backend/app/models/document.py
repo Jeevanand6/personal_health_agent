@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.ai_extraction import AIExtraction
     from app.models.observation_interpretation import ObservationInterpretation
     from app.models.timeline_event import TimelineEvent
+    from app.models.document_chunk import DocumentChunk
 
 
 class Document(Base):
@@ -73,3 +74,9 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        "DocumentChunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+

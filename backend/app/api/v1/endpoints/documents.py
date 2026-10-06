@@ -44,6 +44,8 @@ from app.services.ocr_service import ocr_service
 from app.services.ai_extraction_service import ai_extraction_service
 from app.services.lab_interpretation_engine import lab_interpretation_engine
 from app.services.audit_service import audit_service, AuditEventType
+from app.schemas.copilot import DocumentIndexResponse
+from app.services.copilot_retrieval import copilot_retrieval_service
 from app.core.logging import logger
 
 router = APIRouter()
@@ -814,4 +816,25 @@ def get_document_laboratory_interpretations(
         total=len(items),
         summary=summary,
         interpretations=items,
+    )
+
+
+@router.post(
+    "/{document_id}/index",
+    response_model=DocumentIndexResponse,
+    summary="Index an authorized document's OCR text into vector chunks for semantic retrieval",
+)
+async def index_document_chunks(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = verify_document_ownership(db, document_id, current_user.id)
+    count = await copilot_retrieval_service.index_document_chunks(
+        db=db, document_id=doc.id, user_id=current_user.id
+    )
+    return DocumentIndexResponse(
+        document_id=doc.id,
+        chunk_count=count,
+        message=f"Indexed {count} vector chunk(s) for document {doc.id}.",
     )

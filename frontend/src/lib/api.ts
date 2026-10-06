@@ -1262,3 +1262,156 @@ export async function updateUserLanguageApi(language: "en" | "ta", token: string
   }
   return data;
 }
+
+// ==============================================================================
+// PERSONAL HEALTH COPILOT INTERFACES & API FUNCTIONS
+// ==============================================================================
+
+export interface SourceReference {
+  document_id?: string | null;
+  document_name: string;
+  page?: number | null;
+  relevance: number;
+  snippet?: string | null;
+  source_type: string;
+}
+
+export interface CopilotChatRequest {
+  message: string;
+  document_id?: string | null;
+  session_id?: string | null;
+  language: "en" | "ta";
+}
+
+export interface CopilotChatResponse {
+  answer: string;
+  sources: SourceReference[];
+  language: string;
+  disclaimer: string;
+  session_id: string;
+  message_id: string;
+  confidence: number;
+  mode: "document_specific" | "health_records";
+}
+
+export interface ChatMessageItem {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  sources: SourceReference[];
+  disclaimer?: string | null;
+  created_at: string;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  document_id?: string | null;
+  document_name?: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ChatSessionDetail {
+  id: string;
+  title: string;
+  document_id?: string | null;
+  document_name?: string | null;
+  created_at: string;
+  updated_at: string;
+  messages: ChatMessageItem[];
+}
+
+export async function chatWithCopilotApi(
+  payload: CopilotChatRequest,
+  token: string
+): Promise<CopilotChatResponse> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/copilot/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Health Copilot was unable to process your inquiry.");
+  }
+  return data;
+}
+
+export async function fetchChatSessionsApi(token: string): Promise<ChatSessionSummary[]> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/copilot/sessions`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!res.ok) {
+    return [];
+  }
+  return await res.json();
+}
+
+export async function fetchChatSessionDetailApi(
+  sessionId: string,
+  token: string
+): Promise<ChatSessionDetail> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/copilot/sessions/${sessionId}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to retrieve conversation history.");
+  }
+  return data;
+}
+
+export async function deleteChatSessionApi(sessionId: string, token: string): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/copilot/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!res.ok) {
+    const data = await res.json();
+    throw new Error(data.detail || "Failed to delete session.");
+  }
+}
+
+export async function indexDocumentVectorChunksApi(
+  documentId: string,
+  token: string
+): Promise<{ document_id: string; chunk_count: number; message: string }> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${documentId}/index`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to index document chunks.");
+  }
+  return data;
+}

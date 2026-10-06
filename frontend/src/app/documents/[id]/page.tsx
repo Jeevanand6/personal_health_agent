@@ -571,6 +571,16 @@ export default function DocumentDetailsPage() {
                 </>
               )}
             </button>
+
+            {/* Ask Copilot About This Document (Phase 13) */}
+            <Link
+              href={`/copilot?document_id=${document.id}`}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 shadow-md shadow-teal-500/20 transition-all transform hover:-translate-y-0.5 active:scale-[0.98]"
+              id="ask-copilot-doc-btn"
+            >
+              <Sparkles className="w-3.5 h-3.5 fill-current" />
+              <span>{isTamil ? "கோபைலட்டிடம் கேளுங்கள்" : "Ask Copilot About This Document"}</span>
+            </Link>
           </div>
         </div>
       </header>

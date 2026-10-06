@@ -8,7 +8,7 @@ from app.core.logging import logger
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.rate_limit import RateLimitMiddleware
 from app.api.v1.router import api_router
-from app.api.v1.endpoints import health, auth, documents, lab, health_summary, timeline, fhir
+from app.api.v1.endpoints import health, auth, documents, lab, health_summary, timeline, fhir, copilot
 from app.db.base import Base
 from app.db.session import engine
 import app.models  # noqa: F401
@@ -143,6 +143,7 @@ app.include_router(lab.router, prefix="/api/lab", tags=["Laboratory"])
 app.include_router(health_summary.router, prefix="/api/health-summary", tags=["Health Summary"])
 app.include_router(timeline.router, prefix="/api/timeline", tags=["Timeline"])
 app.include_router(fhir.router, prefix="/api/fhir", tags=["FHIR & ABDM"])
+app.include_router(copilot.router, prefix="/api/copilot", tags=["Personal Health Copilot"])
 
 # API v1 versioned routes
 app.include_router(api_router, prefix=settings.API_V1_STR)

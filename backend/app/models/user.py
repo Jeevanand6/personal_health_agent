@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.observation_interpretation import ObservationInterpretation
     from app.models.health_summary import HealthSummary
     from app.models.timeline_event import TimelineEvent
+    from app.models.chat_session import ChatSession
 
 
 class User(Base):
@@ -57,3 +58,8 @@ class User(Base):
     timeline_events: Mapped[list["TimelineEvent"]] = relationship(
         "TimelineEvent", back_populates="user", cascade="all, delete-orphan"
     )
+
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(
+        "ChatSession", back_populates="user", cascade="all, delete-orphan"
+    )
+

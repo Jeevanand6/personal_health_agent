@@ -25,6 +25,15 @@ from app.schemas.timeline import (
     TimelineResponse,
     TimelineSyncResponse,
 )
+from app.schemas.copilot import (
+    SourceReference,
+    CopilotChatRequest,
+    CopilotChatResponse,
+    ChatMessageItem,
+    ChatSessionSummary,
+    ChatSessionDetail,
+    DocumentIndexResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -46,4 +55,11 @@ __all__ = [
     "TimelineSummaryStats",
     "TimelineResponse",
     "TimelineSyncResponse",
+    "SourceReference",
+    "CopilotChatRequest",
+    "CopilotChatResponse",
+    "ChatMessageItem",
+    "ChatSessionSummary",
+    "ChatSessionDetail",
+    "DocumentIndexResponse",
 ]
