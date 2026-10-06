@@ -32,3 +32,14 @@ credentials.json
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies & builds
+frontend/node_modules/
+node_modules/
+frontend/.next/
+.next/
+frontend/out/
+
+# Local Storage & Database Volumes
+storage_data/
+postgres_data/

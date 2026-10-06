@@ -1,0 +1,73 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: health_copilot_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-health_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-health_secure_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-health_copilot_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U health_user -d health_copilot_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - health_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: health_copilot_backend
+    restart: unless-stopped
+    environment:
+      APP_NAME: ${APP_NAME:-AI-Powered Personal Health Copilot}
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-True}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://health_user:health_secure_password_2026@db:5432/health_copilot_db}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-health-copilot-2026-super-secure}
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_DIR: /app/storage_data
+    ports:
+      - "8000:8000"
+    volumes:
+      - storage_data:/app/storage_data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - health_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    container_name: health_copilot_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - health_network
+
+volumes:
+  postgres_data:
+    driver: local
+  storage_data:
+    driver: local
+
+networks:
+  health_network:
+    driver: bridge
