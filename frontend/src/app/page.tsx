@@ -40,8 +40,15 @@ export default function HomePage() {
             href="/dashboard"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-sm shadow-lg shadow-teal-600/25 transition-all hover:-translate-y-0.5"
           >
-            <span>Launch Dashboard Shell</span>
+            <span>Launch Dashboard</span>
             <ArrowRight className="w-4 h-4" />
+          </Link>
+
+          <Link
+            href="/register"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-800 font-semibold text-sm hover:bg-teal-100 transition-colors shadow-sm"
+          >
+            <span>Create Patient Profile</span>
           </Link>
 
           <a
@@ -50,7 +57,7 @@ export default function HomePage() {
             rel="noopener noreferrer"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-white border border-slate-300 text-slate-700 font-semibold text-sm hover:bg-slate-50 transition-colors shadow-sm"
           >
-            <span>View FastAPI OpenAPI Docs</span>
+            <span>FastAPI Docs</span>
             <span className="text-xs text-slate-400 font-mono">:8000/docs</span>
           </a>
         </div>

@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import logger
 from app.api.v1.router import api_router
-from app.api.v1.endpoints import health
+from app.api.v1.endpoints import health, auth
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -46,11 +46,12 @@ async def log_requests(request: Request, call_next):
         )
 
 
-# Direct health endpoints for container probes and API client
+# Direct endpoints for easy access and container probes
 app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(health.router, prefix="", tags=["Health"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 
-# API v1 routes
+# API v1 versioned routes
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
@@ -62,4 +63,9 @@ def root():
         "status": "online",
         "docs": "/docs",
         "health": "/api/health",
+        "auth": {
+            "register": "/api/auth/register",
+            "login": "/api/auth/login",
+            "me": "/api/auth/me",
+        },
     }
