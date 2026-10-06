@@ -13,6 +13,18 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentUpdateRequest,
 )
+from app.schemas.health_summary import (
+    HealthSummaryResponse,
+    HealthSummaryGenerateRequest,
+    StructuredHealthSummaryContent,
+)
+from app.schemas.timeline import (
+    TimelineEventItem,
+    TimelineEventGroup,
+    TimelineSummaryStats,
+    TimelineResponse,
+    TimelineSyncResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -26,4 +38,12 @@ __all__ = [
     "DocumentResponse",
     "DocumentListResponse",
     "DocumentUpdateRequest",
+    "HealthSummaryResponse",
+    "HealthSummaryGenerateRequest",
+    "StructuredHealthSummaryContent",
+    "TimelineEventItem",
+    "TimelineEventGroup",
+    "TimelineSummaryStats",
+    "TimelineResponse",
+    "TimelineSyncResponse",
 ]

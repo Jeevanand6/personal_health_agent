@@ -15,13 +15,15 @@ import {
   CheckCircle2,
   Sparkles,
 } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
 
 export default function RegisterPage() {
+  const { language, setLanguage, isTamil, t } = useLanguage();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [preferredLanguage, setPreferredLanguage] = useState("en");
+  const [preferredLanguage, setPreferredLanguage] = useState(language);
   const [bloodGroup, setBloodGroup] = useState("");
   const [gender, setGender] = useState("");
   const [contactNumber, setContactNumber] = useState("");
@@ -38,17 +40,46 @@ export default function RegisterPage() {
     }
   }, [user, isLoading, router]);
 
+  const handleLanguageSelect = (lang: string) => {
+    if (lang === "en" || lang === "ta") {
+      setPreferredLanguage(lang);
+      setLanguage(lang);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (password.length < 8) {
-      setError("Password must be at least 8 characters long.");
+      setError(
+        isTamil
+          ? "கடவுச்சொல் குறைந்தது 8 எழுத்துக்கள் இருக்க வேண்டும்."
+          : "Password must be at least 8 characters long."
+      );
+      return;
+    }
+
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasDigit = /[0-9]/.test(password);
+    const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+    if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) {
+      setError(
+        isTamil
+          ? "கடவுச்சொல் பெரியெழுத்து, சிறியெழுத்து, எண் மற்றும் சிறப்புக் குறியீட்டைக் கொண்டிருக்க வேண்டும் (எ.கா. Password123!)."
+          : "Password must include uppercase, lowercase, number, and special character (e.g. Password123!)."
+      );
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match. Please re-enter.");
+      setError(
+        isTamil
+          ? "கடவுச்சொற்கள் பொருந்தவில்லை. மீண்டும் உள்ளிடவும்."
+          : "Passwords do not match. Please re-enter."
+      );
       return;
     }
 
@@ -65,7 +96,12 @@ export default function RegisterPage() {
       });
       router.push("/dashboard");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Registration failed.";
+      const msg =
+        err instanceof Error
+          ? err.message
+          : isTamil
+          ? "பதிவு செய்தல் தோல்வியடைந்தது."
+          : "Registration failed.";
       setError(msg);
     } finally {
       setIsSubmitting(false);
@@ -80,10 +116,10 @@ export default function RegisterPage() {
             <Activity className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Create Your Health Profile
+            {t("auth", "register_title", "Create Your Health Profile")}
           </h2>
           <p className="text-xs text-slate-500">
-            Join the personalized clinical AI copilot for secure record tracking
+            {t("auth", "register_subtitle", "Join the personalized clinical AI copilot for secure record tracking")}
           </p>
         </div>
 
@@ -91,8 +127,12 @@ export default function RegisterPage() {
         <div className="p-3.5 rounded-xl bg-teal-50/70 border border-teal-200 flex items-start gap-3 text-xs text-teal-900">
           <Sparkles className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
           <div className="leading-relaxed">
-            <strong className="text-teal-950 font-semibold">ABDM Mock Architecture: </strong>
-            A unique illustrative 14-digit ABHA ID and ABHA address will be provisioned automatically for your profile.
+            <strong className="text-teal-950 font-semibold">
+              {isTamil ? "ABDM மாதிரி கட்டமைப்பு: " : "ABDM Mock Architecture: "}
+            </strong>
+            {isTamil
+              ? "உங்கள் சுயவிவரத்திற்காக தனிப்பட்ட 14-இலக்க மாதிரி ABHA எண் மற்றும் ABHA முகவரி தானாக உருவாக்கப்படும்."
+              : "A unique illustrative 14-digit ABHA ID and ABHA address will be provisioned automatically for your profile."}
           </div>
         </div>
 
@@ -106,7 +146,7 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-slate-700">
-              Full Legal Name <span className="text-rose-500">*</span>
+              {t("auth", "fullname_label", "Full Legal Name")} <span className="text-rose-500">*</span>
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -117,7 +157,7 @@ export default function RegisterPage() {
                 required
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Arun Kumar"
+                placeholder={isTamil ? "உதா. அருண் குமார்" : "e.g. Arun Kumar"}
                 className="block w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900 placeholder:text-slate-400"
               />
             </div>
@@ -125,7 +165,7 @@ export default function RegisterPage() {
 
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-slate-700">
-              Email Address <span className="text-rose-500">*</span>
+              {t("auth", "email_label", "Email Address")} <span className="text-rose-500">*</span>
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -145,7 +185,7 @@ export default function RegisterPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Password <span className="text-rose-500">*</span>
+                {t("auth", "password_label", "Password")} <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -156,7 +196,7 @@ export default function RegisterPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Min. 8 characters"
+                  placeholder={isTamil ? "குறைந்தது 8 எழுத்துகள்" : "Min. 8 characters"}
                   className="block w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900 placeholder:text-slate-400"
                 />
               </div>
@@ -164,7 +204,8 @@ export default function RegisterPage() {
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Confirm Password <span className="text-rose-500">*</span>
+                {isTamil ? "கடவுச்சொல்லை உறுதிப்படுத்தவும்" : "Confirm Password"}{" "}
+                <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -175,7 +216,7 @@ export default function RegisterPage() {
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Repeat password"
+                  placeholder={isTamil ? "மீண்டும் உள்ளிடவும்" : "Repeat password"}
                   className="block w-full pl-10 pr-3.5 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900 placeholder:text-slate-400"
                 />
               </div>
@@ -185,11 +226,11 @@ export default function RegisterPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Language
+                {t("auth", "language_label", "Preferred Language")}
               </label>
               <select
                 value={preferredLanguage}
-                onChange={(e) => setPreferredLanguage(e.target.value)}
+                onChange={(e) => handleLanguageSelect(e.target.value)}
                 className="block w-full px-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900"
               >
                 <option value="en">English</option>
@@ -199,14 +240,14 @@ export default function RegisterPage() {
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Blood Group
+                {t("auth", "blood_group_label", "Blood Group")}
               </label>
               <select
                 value={bloodGroup}
                 onChange={(e) => setBloodGroup(e.target.value)}
                 className="block w-full px-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900"
               >
-                <option value="">Select</option>
+                <option value="">{isTamil ? "தேர்ந்தெடு" : "Select"}</option>
                 <option value="A+">A+</option>
                 <option value="A-">A-</option>
                 <option value="B+">B+</option>
@@ -220,17 +261,17 @@ export default function RegisterPage() {
 
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-slate-700">
-                Gender
+                {t("auth", "gender_label", "Gender")}
               </label>
               <select
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
                 className="block w-full px-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 bg-white text-slate-900"
               >
-                <option value="">Select</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
+                <option value="">{isTamil ? "தேர்ந்தெடு" : "Select"}</option>
+                <option value="male">{isTamil ? "ஆண்" : "Male"}</option>
+                <option value="female">{isTamil ? "பெண்" : "Female"}</option>
+                <option value="other">{isTamil ? "மற்றவை" : "Other"}</option>
               </select>
             </div>
           </div>
@@ -241,10 +282,10 @@ export default function RegisterPage() {
             className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-600 shadow-md shadow-teal-600/25 transition-all disabled:opacity-50 mt-2"
           >
             {isSubmitting ? (
-              <span>Creating Patient Account...</span>
+              <span>{isTamil ? "கணக்கு உருவாக்கப்படுகிறது..." : "Creating Patient Account..."}</span>
             ) : (
               <>
-                <span>Complete Registration</span>
+                <span>{t("auth", "submit_register", "Register & Continue")}</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
@@ -253,21 +294,26 @@ export default function RegisterPage() {
 
         <div className="pt-2 text-center space-y-3 text-xs border-t border-slate-100">
           <p className="text-slate-500">
-            Already have an account?{" "}
+            {t("auth", "have_account", "Already registered?")}{" "}
             <Link
               href="/login"
               className="font-semibold text-teal-600 hover:text-teal-700 hover:underline"
             >
-              Sign in to record
+              {isTamil ? "உள்நுழைக" : "Sign in to record"}
             </Link>
           </p>
 
           <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
             <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-            <span>Encrypted with Argon2id &amp; HIPAA-aligned Data Protection</span>
+            <span>
+              {isTamil
+                ? "Argon2id & HIPAA இணக்கமான தரவு பாதுகாப்புடன் குறியாக்கம் செய்யப்பட்டது"
+                : "Encrypted with Argon2id & HIPAA-aligned Data Protection"}
+            </span>
           </div>
         </div>
       </div>
     </div>
   );
 }
+

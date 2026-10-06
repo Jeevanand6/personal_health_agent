@@ -3,6 +3,8 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { AuthProvider } from "@/lib/auth-context";
+import { LanguageProvider } from "@/lib/language-context";
+import DemoModeBanner, { DemoModeProvider } from "@/components/DemoModeBanner";
 
 export const metadata: Metadata = {
   title: "HealthCopilot - AI-Powered Personal Health Record Assistant",
@@ -18,11 +20,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="flex flex-col min-h-screen bg-slate-50 antialiased font-sans">
-        <AuthProvider>
-          <Navbar />
-          <main className="flex-1">{children}</main>
-          <Footer />
-        </AuthProvider>
+        <LanguageProvider>
+          <AuthProvider>
+            <DemoModeProvider>
+              <DemoModeBanner />
+              <Navbar />
+              <main className="flex-1">{children}</main>
+              <Footer />
+            </DemoModeProvider>
+          </AuthProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

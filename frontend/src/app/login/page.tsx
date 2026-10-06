@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Activity, Lock, Mail, ArrowRight, AlertCircle, ShieldCheck } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,6 +14,7 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { login, user, isLoading } = useAuth();
+  const { isTamil, t } = useLanguage();
   const router = useRouter();
 
   // If already authenticated, redirect directly to dashboard
@@ -27,7 +29,11 @@ export default function LoginPage() {
     setError(null);
 
     if (!email || !password) {
-      setError("Please enter both email and password.");
+      setError(
+        isTamil
+          ? "மின்னஞ்சல் மற்றும் கடவுச்சொல் இரண்டையும் உள்ளிடவும்."
+          : "Please enter both email and password."
+      );
       return;
     }
 
@@ -36,7 +42,12 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/dashboard");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Invalid email or password.";
+      const msg =
+        err instanceof Error
+          ? err.message
+          : isTamil
+          ? "தவறான மின்னஞ்சல் அல்லது கடவுச்சொல்."
+          : "Invalid email or password.";
       setError(msg);
     } finally {
       setIsSubmitting(false);
@@ -52,10 +63,10 @@ export default function LoginPage() {
             <Activity className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Sign in to your Health Record
+            {t("auth", "login_title", "Sign in to your Health Record")}
           </h2>
           <p className="text-xs text-slate-500">
-            Access your encrypted clinical timeline and lab analyses
+            {t("auth", "login_subtitle", "Access your encrypted clinical timeline and lab analyses")}
           </p>
         </div>
 
@@ -71,7 +82,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-slate-700">
-              Email Address
+              {t("auth", "email_label", "Email Address")}
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -91,7 +102,7 @@ export default function LoginPage() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-semibold text-slate-700">
-                Password
+                {t("auth", "password_label", "Password")}
               </label>
             </div>
             <div className="relative">
@@ -115,10 +126,10 @@ export default function LoginPage() {
             className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-600 shadow-md shadow-teal-600/25 transition-all disabled:opacity-50"
           >
             {isSubmitting ? (
-              <span>Authenticating...</span>
+              <span>{isTamil ? "சரிபார்க்கிறது..." : "Authenticating..."}</span>
             ) : (
               <>
-                <span>Sign In</span>
+                <span>{t("auth", "submit_login", "Sign In")}</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
@@ -128,21 +139,37 @@ export default function LoginPage() {
         {/* Footer Links */}
         <div className="pt-2 text-center space-y-4 text-xs border-t border-slate-100">
           <p className="text-slate-500">
-            Don&apos;t have an account?{" "}
+            {t("auth", "no_account", "Don't have an account?")}{" "}
             <Link
               href="/register"
               className="font-semibold text-teal-600 hover:text-teal-700 hover:underline"
             >
-              Create patient profile
+              {isTamil ? "புதிய கணக்கை உருவாக்கவும்" : "Create patient profile"}
             </Link>
           </p>
 
+          <button
+            type="button"
+            onClick={() => {
+              setEmail("demo@example.com");
+              setPassword("Password123!");
+            }}
+            className="text-[11px] text-teal-800 bg-teal-50 hover:bg-teal-100 py-1.5 px-3 rounded-lg border border-teal-200/80 font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <span>Fill Demo Credentials: demo@example.com</span>
+          </button>
+
           <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px]">
             <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-            <span>Encrypted with Argon2id & JWT Authentication</span>
+            <span>
+              {isTamil
+                ? "Argon2id மற்றும் JWT குறியாக்கம் மூலம் பாதுகாக்கப்படுகிறது"
+                : "Encrypted with Argon2id & JWT Authentication"}
+            </span>
           </div>
         </div>
       </div>
     </div>
   );
 }
+

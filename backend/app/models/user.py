@@ -5,6 +5,16 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.patient import Patient
+    from app.models.document import Document
+    from app.models.observation_interpretation import ObservationInterpretation
+    from app.models.health_summary import HealthSummary
+    from app.models.timeline_event import TimelineEvent
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -34,4 +44,16 @@ class User(Base):
 
     documents: Mapped[list["Document"]] = relationship(
         "Document", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    interpretations: Mapped[list["ObservationInterpretation"]] = relationship(
+        "ObservationInterpretation", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    summaries: Mapped[list["HealthSummary"]] = relationship(
+        "HealthSummary", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    timeline_events: Mapped[list["TimelineEvent"]] = relationship(
+        "TimelineEvent", back_populates="user", cascade="all, delete-orphan"
     )

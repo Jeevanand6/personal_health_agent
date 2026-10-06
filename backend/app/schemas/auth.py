@@ -20,6 +20,10 @@ class UserLoginRequest(BaseModel):
     password: str
 
 
+class UserLanguageUpdateRequest(BaseModel):
+    preferred_language: str = Field(..., pattern="^(en|ta)$")
+
+
 class PatientResponse(BaseModel):
     id: uuid.UUID
     abha_id: Optional[str] = None

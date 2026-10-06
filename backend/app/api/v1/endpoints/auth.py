@@ -1,14 +1,20 @@
 import random
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_current_user
-from app.core.security import get_password_hash, verify_password, create_access_token
+from app.core.security import get_password_hash, verify_password, create_access_token, validate_password_strength
+from app.core.sanitizer import sanitize_text
+from app.core.rate_limit import get_client_ip
 from app.core.config import settings
 from app.models.user import User
 from app.models.patient import Patient
+from app.models.audit_log import AuditLog
+from app.services.audit_service import audit_service, AuditEventType
 from app.schemas.auth import (
     UserRegisterRequest,
     UserLoginRequest,
+    UserLanguageUpdateRequest,
     TokenResponse,
     UserResponse,
     PatientResponse,
@@ -53,7 +59,7 @@ def _build_user_response(user: User, patient: Patient | None) -> UserResponse:
     "/register",
     response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new user and generate a patient profile",
+    summary="Register a new user and generate a patient profile with strict password validation",
 )
 def register_user(
     payload: UserRegisterRequest,
@@ -61,7 +67,15 @@ def register_user(
 ):
     normalized_email = payload.email.lower().strip()
 
-    # Check duplicate email
+    # 1. Enforce OWASP Password Strength
+    is_strong, strength_msg = validate_password_strength(payload.password, normalized_email)
+    if not is_strong:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=strength_msg,
+        )
+
+    # 2. Check duplicate email
     existing_user = db.query(User).filter(User.email == normalized_email).first()
     if existing_user:
         logger.warning(f"Registration failed: duplicate email {normalized_email}")
@@ -70,14 +84,17 @@ def register_user(
             detail="A user with this email address already exists.",
         )
 
-    # Hash password securely using Argon2
+    # 3. Sanitize inputs to prevent XSS
+    sanitized_full_name = sanitize_text(payload.full_name, max_length=150, escape_html=True)
+
+    # 4. Hash password securely using Argon2id
     hashed_pwd = get_password_hash(payload.password)
 
-    # Create User
+    # 5. Create User
     new_user = User(
         email=normalized_email,
         hashed_password=hashed_pwd,
-        full_name=payload.full_name.strip(),
+        full_name=sanitized_full_name,
         role="patient",
         is_active=True,
     )
@@ -124,17 +141,30 @@ def register_user(
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Authenticate user and issue JWT access token",
+    summary="Authenticate user and issue JWT access token with audit logging",
 )
 def login_user(
     payload: UserLoginRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     normalized_email = payload.email.lower().strip()
+    client_ip = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "unknown")
+
     user = db.query(User).filter(User.email == normalized_email).first()
 
     if not user or not verify_password(payload.password, user.hashed_password):
         logger.warning(f"Failed login attempt for {normalized_email}")
+        audit_service.log_event(
+            db=db,
+            event_type=AuditEventType.LOGIN,
+            status="FAILURE",
+            user_id=None,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            details={"email": normalized_email, "reason": "invalid_credentials"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -142,6 +172,15 @@ def login_user(
         )
 
     if not user.is_active:
+        audit_service.log_event(
+            db=db,
+            event_type=AuditEventType.LOGIN,
+            status="FAILURE",
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=user_agent,
+            details={"email": normalized_email, "reason": "account_deactivated"},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is deactivated.",
@@ -153,6 +192,17 @@ def login_user(
     access_token = create_access_token(
         subject=user.id,
         email=user.email,
+    )
+
+    # Record successful LOGIN audit event
+    audit_service.log_event(
+        db=db,
+        event_type=AuditEventType.LOGIN,
+        status="SUCCESS",
+        user_id=user.id,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        details={"email": user.email},
     )
 
     logger.info(f"User authenticated: {user.email}")
@@ -176,3 +226,53 @@ def get_current_user_profile(
 ):
     patient = db.query(Patient).filter(Patient.user_id == current_user.id).first()
     return _build_user_response(current_user, patient)
+
+
+@router.patch(
+    "/me/language",
+    response_model=UserResponse,
+    summary="Update preferred language for current authenticated patient",
+)
+def update_user_language(
+    payload: UserLanguageUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    patient = db.query(Patient).filter(Patient.user_id == current_user.id).first()
+    if not patient:
+        patient = Patient(
+            user_id=current_user.id,
+            preferred_language=payload.preferred_language,
+        )
+        db.add(patient)
+    else:
+        patient.preferred_language = payload.preferred_language
+
+    db.commit()
+    db.refresh(patient)
+    logger.info(f"Updated preferred language for user {current_user.email} to {payload.preferred_language}")
+    return _build_user_response(current_user, patient)
+
+
+@router.get(
+    "/me/audit-logs",
+    summary="Retrieve personal security audit trail for authenticated user",
+)
+def get_user_audit_trail(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    logs = audit_service.get_user_audit_logs(db, current_user.id, limit=50)
+    return [
+        {
+            "id": str(log.id),
+            "event_type": log.event_type,
+            "status": log.status,
+            "resource_id": log.resource_id,
+            "ip_address": log.ip_address,
+            "user_agent": log.user_agent,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "details": log.details,
+        }
+        for log in logs
+    ]

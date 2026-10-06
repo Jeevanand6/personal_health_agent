@@ -18,6 +18,7 @@ class ProcessingStatus(str, Enum):
     UPLOADED = "UPLOADED"
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
+    LOW_CONFIDENCE = "LOW_CONFIDENCE"
     FAILED = "FAILED"
 
 

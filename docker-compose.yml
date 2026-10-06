@@ -30,11 +30,12 @@ services:
       APP_NAME: ${APP_NAME:-AI-Powered Personal Health Copilot}
       APP_ENV: ${APP_ENV:-development}
       DEBUG: ${DEBUG:-True}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://health_user:health_secure_password_2026@db:5432/health_copilot_db}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://health_user:health_secure_password_2026@db:5432/health_copilot_db}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-key-health-copilot-2026-super-secure}
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
       STORAGE_BACKEND: local
       LOCAL_STORAGE_DIR: /app/storage_data
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:

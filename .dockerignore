@@ -1,0 +1,11 @@
+venv/
+.venv/
+node_modules/
+.next/
+storage_data/
+*.db
+*.sqlite3
+__pycache__/
+.git/
+.gitignore
+sample_medical_documents/

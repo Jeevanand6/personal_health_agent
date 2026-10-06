@@ -56,7 +56,89 @@ export type ProcessingStatusEnum =
   | "UPLOADED"
   | "PROCESSING"
   | "COMPLETED"
+  | "LOW_CONFIDENCE"
   | "FAILED";
+
+export interface DocumentExtraction {
+  id: string;
+  document_id: string;
+  raw_text: string;
+  cleaned_text: string;
+  ocr_confidence: number;
+  page_count: number;
+  language_detected: string;
+  processing_time: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OCRTriggerResult {
+  document_id: string;
+  processing_status: ProcessingStatusEnum;
+  ocr_confidence: number;
+  language_detected: string;
+  page_count: number;
+  message: string;
+  extraction?: DocumentExtraction | null;
+}
+
+export interface MedicationItem {
+  name: string | null;
+  dosage: string | null;
+  route: string | null;
+  frequency: string | null;
+  duration: string | null;
+  instructions: string | null;
+  confidence: number;
+}
+
+export interface ObservationItem {
+  test_name: string | null;
+  value: string | null;
+  numeric_value: number | null;
+  unit: string | null;
+  reference_range: string | null;
+  abnormal_flag: "LOW" | "NORMAL" | "HIGH" | "UNKNOWN";
+  confidence: number;
+}
+
+export interface StructuredMedicalData {
+  patient_name: string | null;
+  patient_age: string | null;
+  patient_gender: string | null;
+  doctor_name: string | null;
+  hospital_name: string | null;
+  document_date: string | null;
+  diagnoses: string[];
+  medications: MedicationItem[];
+  laboratory_tests: string[];
+  observations: ObservationItem[];
+  reference_ranges: string[];
+  units: string[];
+  abnormal_flags: string[];
+  clinical_notes: string | null;
+  field_confidences: Record<string, number>;
+  overall_confidence: number;
+}
+
+export interface AIExtraction {
+  id: string;
+  document_id: string;
+  model_name: string;
+  confidence_score: number;
+  processing_time: number;
+  structured_data: StructuredMedicalData;
+  raw_response?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIExtractTriggerResult {
+  document_id: string;
+  status: string;
+  message: string;
+  extraction?: AIExtraction | null;
+}
 
 export interface MedicalDocument {
   id: string;
@@ -172,6 +254,27 @@ export async function getMeApi(token: string): Promise<User> {
   return data;
 }
 
+export async function updateLanguageApi(
+  language: "en" | "ta",
+  token: string
+): Promise<User> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/auth/me/language`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ preferred_language: language }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to update preferred language.");
+  }
+  return data;
+}
+
 // ==========================================
 // DOCUMENT MANAGEMENT APIs
 // ==========================================
@@ -279,4 +382,883 @@ export async function deleteDocumentApi(id: string, token: string): Promise<void
 export function getDocumentPreviewUrl(id: string, token: string): string {
   const baseUrl = getApiBaseUrl();
   return `${baseUrl}/api/documents/${id}/file?token=${encodeURIComponent(token)}`;
+}
+
+export async function runDocumentOcrApi(
+  id: string,
+  token: string
+): Promise<OCRTriggerResult> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/ocr`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to run OCR on document.");
+  }
+  return data;
+}
+
+export async function getDocumentExtractionApi(
+  id: string,
+  token: string
+): Promise<DocumentExtraction> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/extraction`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to retrieve OCR extraction.");
+  }
+  return data;
+}
+
+export async function triggerAIExtractionApi(
+  id: string,
+  token: string
+): Promise<AIExtractTriggerResult> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/extract`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "AI medical information extraction failed.");
+  }
+  return data;
+}
+
+export async function getDocumentAIExtractionApi(
+  id: string,
+  token: string
+): Promise<AIExtraction> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/ai-extraction`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to retrieve AI structured extraction.");
+  }
+  return data;
+}
+
+export interface ObservationInterpretation {
+  id: string;
+  observation_id: string;
+  document_id: string;
+  user_id: string;
+  test_name: string;
+  value: string;
+  numeric_value?: number | null;
+  unit?: string | null;
+  reference_range?: string | null;
+  status: "LOW" | "NORMAL" | "HIGH" | "UNKNOWN";
+  severity: "NORMAL" | "INFORMATIONAL" | "REVIEW_RECOMMENDED" | "URGENT_REVIEW";
+  explanation: string;
+  confidence: number;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObservationInterpretationListResponse {
+  document_id?: string | null;
+  total: number;
+  summary: {
+    LOW: number;
+    NORMAL: number;
+    HIGH: number;
+    UNKNOWN: number;
+    URGENT_REVIEW: number;
+    REVIEW_RECOMMENDED: number;
+  };
+  interpretations: ObservationInterpretation[];
+}
+
+export interface InterpretTriggerResult {
+  document_id: string;
+  status: string;
+  message: string;
+  total_interpreted: number;
+  interpretations: ObservationInterpretation[];
+}
+
+export interface LabTrendPoint {
+  date: string;
+  timestamp: string;
+  value: number;
+  unit?: string | null;
+  status: string;
+  severity: string;
+  reference_min?: number | null;
+  reference_max?: number | null;
+  document_id: string;
+  original_filename?: string | null;
+}
+
+export interface LabTrendSeries {
+  test_name: string;
+  unit?: string | null;
+  latest_value?: number | null;
+  latest_status: string;
+  latest_severity: string;
+  reference_range?: string | null;
+  points: LabTrendPoint[];
+}
+
+export interface LabDashboardData {
+  total_tests: number;
+  normal_count: number;
+  review_recommended_count: number;
+  urgent_review_count: number;
+  unknown_count: number;
+  recent_interpretations: ObservationInterpretation[];
+  trends: LabTrendSeries[];
+}
+
+export async function interpretDocumentApi(
+  id: string,
+  token: string
+): Promise<InterpretTriggerResult> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/interpret`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to interpret laboratory observations.");
+  }
+  return data;
+}
+
+export async function getDocumentInterpretationsApi(
+  id: string,
+  token: string
+): Promise<ObservationInterpretationListResponse> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/interpretations`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to retrieve laboratory interpretations.");
+  }
+  return data;
+}
+
+export async function getLabDashboardApi(
+  token: string
+): Promise<LabDashboardData> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/lab/dashboard`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load laboratory dashboard data.");
+  }
+  return data;
+}
+
+export async function getLabInterpretationsApi(
+  token: string,
+  filters?: { status?: string; severity?: string; test_name?: string }
+): Promise<ObservationInterpretationListResponse> {
+  const baseUrl = getApiBaseUrl();
+  const params = new URLSearchParams();
+  if (filters?.status) params.append("status", filters.status);
+  if (filters?.severity) params.append("severity", filters.severity);
+  if (filters?.test_name) params.append("test_name", filters.test_name);
+
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const res = await fetch(`${baseUrl}/api/lab/interpretations${qs}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to retrieve laboratory results.");
+  }
+  return data;
+}
+
+// ----------------------------------------------------
+// PHASE 7: PERSONAL HEALTH SUMMARY TYPES & API
+// ----------------------------------------------------
+
+export interface SourceDocumentReference {
+  document_id: string;
+  filename: string;
+  document_date?: string | null;
+  hospital_name?: string | null;
+  doctor_name?: string | null;
+}
+
+export interface HealthSnapshotSection {
+  headline: string;
+  patient_context: Record<string, any>;
+  overview_text: string;
+  total_records_analyzed: number;
+  active_medications_count: number;
+  lab_tests_count: number;
+  abnormal_findings_count: number;
+  source_document_ids: string[];
+}
+
+export interface MedicalRecordSummaryItem {
+  document_id: string;
+  filename: string;
+  document_type: string;
+  document_date?: string | null;
+  doctor_name?: string | null;
+  hospital_name?: string | null;
+  key_findings: string[];
+}
+
+export interface MedicationSummaryItem {
+  name: string;
+  dosage?: string | null;
+  route?: string | null;
+  frequency?: string | null;
+  duration?: string | null;
+  instructions?: string | null;
+  source_document_id: string;
+  source_document_title: string;
+}
+
+export interface LabObservationSummaryItem {
+  test_name: string;
+  value: string;
+  unit?: string | null;
+  reference_range?: string | null;
+  status: "LOW" | "NORMAL" | "HIGH" | "UNKNOWN" | string;
+  test_date?: string | null;
+  source_document_id: string;
+  source_document_title: string;
+}
+
+export interface AbnormalResultSummaryItem {
+  test_name: string;
+  value: string;
+  unit?: string | null;
+  reference_range?: string | null;
+  status: "LOW" | "HIGH" | "UNKNOWN" | string;
+  severity: "INFORMATIONAL" | "REVIEW_RECOMMENDED" | "URGENT_REVIEW" | string;
+  statement: string;
+  action_guidance: string;
+  source_document_id: string;
+  source_document_title: string;
+}
+
+export interface DiagnosisSummaryItem {
+  condition_name: string;
+  recorded_date?: string | null;
+  doctor_name?: string | null;
+  hospital_name?: string | null;
+  source_document_id: string;
+  source_document_title: string;
+}
+
+export interface ImportantDateItem {
+  date: string;
+  event: string;
+  category: "LAB_TEST" | "PRESCRIPTION" | "CONSULTATION" | "RECORD_UPLOAD" | string;
+  source_document_id?: string | null;
+}
+
+export interface DoctorQuestionItem {
+  id: string;
+  category: string;
+  question: string;
+  context: string;
+  related_test_or_topic?: string | null;
+  source_document_id?: string | null;
+}
+
+export interface StructuredHealthSummaryContent {
+  language: string;
+  disclaimer: string;
+  health_snapshot: HealthSnapshotSection;
+  recent_medical_records: MedicalRecordSummaryItem[];
+  medications: MedicationSummaryItem[];
+  laboratory_observations: LabObservationSummaryItem[];
+  abnormal_results: AbnormalResultSummaryItem[];
+  recent_diagnoses: DiagnosisSummaryItem[];
+  important_dates: ImportantDateItem[];
+  doctor_questions: DoctorQuestionItem[];
+}
+
+export interface HealthSummaryResponse {
+  id: string;
+  user_id: string;
+  language: "en" | "ta" | string;
+  summary: StructuredHealthSummaryContent;
+  source_documents: SourceDocumentReference[];
+  model: string;
+  confidence: number;
+  generated_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getHealthSummaryApi(
+  token: string,
+  language: string = "en"
+): Promise<HealthSummaryResponse> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/health-summary?language=${encodeURIComponent(language)}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load Personal Health Summary.");
+  }
+  return data;
+}
+
+export async function generateHealthSummaryApi(
+  token: string,
+  payload: { language?: string; force_refresh?: boolean } = {}
+): Promise<HealthSummaryResponse> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/health-summary/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      language: payload.language || "en",
+      force_refresh: payload.force_refresh ?? true,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to generate Personal Health Summary.");
+  }
+  return data;
+}
+
+export async function getHealthSummaryHistoryApi(
+  token: string
+): Promise<HealthSummaryResponse[]> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/health-summary/history`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load health summary history.");
+  }
+  return data;
+}
+
+// ----------------------------------------------------
+// PHASE 8: UNIFIED HEALTHCARE TIMELINE TYPES & API
+// ----------------------------------------------------
+
+export type TimelineEventTypeEnum =
+  | "DOCUMENT"
+  | "DIAGNOSIS"
+  | "MEDICATION"
+  | "LAB_RESULT"
+  | "DIAGNOSTIC_REPORT"
+  | "DISCHARGE"
+  | "ENCOUNTER";
+
+export interface TimelineEventItem {
+  id: string;
+  user_id: string;
+  event_type: TimelineEventTypeEnum | string;
+  event_date: string;
+  title: string;
+  description: string;
+  source_document_id: string;
+  source_document_title: string;
+  metadata_json: Record<string, any>;
+  created_at: string;
+}
+
+export interface TimelineEventGroup {
+  date_group: string;
+  display_date: string;
+  event_count: number;
+  events: TimelineEventItem[];
+}
+
+export interface TimelineSummaryStats {
+  total_events: number;
+  by_type: Record<string, number>;
+  earliest_date?: string | null;
+  latest_date?: string | null;
+}
+
+export interface TimelineResponse {
+  events: TimelineEventItem[];
+  grouped_events: TimelineEventGroup[];
+  stats: TimelineSummaryStats;
+  available_categories: string[];
+}
+
+export async function getTimelineApi(
+  token: string,
+  params?: {
+    category?: string;
+    event_type?: string;
+    start_date?: string;
+    end_date?: string;
+    search?: string;
+    order?: "desc" | "asc" | string;
+  }
+): Promise<TimelineResponse> {
+  const baseUrl = getApiBaseUrl();
+  const searchParams = new URLSearchParams();
+  if (params?.category) searchParams.append("category", params.category);
+  if (params?.event_type) searchParams.append("event_type", params.event_type);
+  if (params?.start_date) searchParams.append("start_date", params.start_date);
+  if (params?.end_date) searchParams.append("end_date", params.end_date);
+  if (params?.search) searchParams.append("search", params.search);
+  if (params?.order) searchParams.append("order", params.order);
+
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  const res = await fetch(`${baseUrl}/api/timeline${qs}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load healthcare timeline.");
+  }
+  return data;
+}
+
+export async function syncTimelineApi(
+  token: string
+): Promise<{ status: string; synced_events_count: number; message: string }> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/timeline/sync`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to sync healthcare timeline.");
+  }
+  return data;
+}
+
+// ============================================================================
+// PHASE 10: ABDM-Ready Healthcare Data Architecture (FHIR R4 & Mock ABHA)
+// ============================================================================
+
+export interface MockAbhaMeta {
+  mock_abha_id: string;
+  mock_abha_address: string;
+  badge: string;
+  disclaimer: string;
+  is_official_abdm: boolean;
+}
+
+export interface FHIRCoding {
+  system?: string;
+  code?: string;
+  display?: string;
+}
+
+export interface FHIRCodeableConcept {
+  coding?: FHIRCoding[];
+  text?: string;
+}
+
+export interface FHIRReference {
+  reference?: string;
+  display?: string;
+  type?: string;
+}
+
+export interface FHIRQuantity {
+  value?: number;
+  unit?: string;
+  system?: string;
+  code?: string;
+}
+
+export interface FHIRIdentifier {
+  use?: string;
+  system?: string;
+  value: string;
+  type?: FHIRCodeableConcept;
+}
+
+export interface FHIRPatientName {
+  use?: string;
+  text: string;
+  family?: string;
+  given?: string[];
+}
+
+export interface FHIRTelecom {
+  system: string;
+  value: string;
+  use?: string;
+}
+
+export interface FHIRPatient {
+  resourceType: "Patient";
+  id: string;
+  identifier: FHIRIdentifier[];
+  active: boolean;
+  name: FHIRPatientName[];
+  telecom: FHIRTelecom[];
+  gender?: string | null;
+  birthDate?: string | null;
+  communication?: Array<{
+    language?: { coding?: FHIRCoding[]; text?: string };
+    preferred?: boolean;
+  }>;
+  meta?: Record<string, any>;
+  mock_abha_meta: MockAbhaMeta;
+}
+
+export interface FHIRObservation {
+  resourceType: "Observation";
+  id: string;
+  status: string;
+  category: FHIRCodeableConcept[];
+  code: FHIRCodeableConcept;
+  subject: FHIRReference;
+  effectiveDateTime?: string | null;
+  valueQuantity?: FHIRQuantity | null;
+  valueString?: string | null;
+  interpretation?: FHIRCodeableConcept[];
+  referenceRange?: Array<{
+    text?: string;
+    type?: { coding?: FHIRCoding[] };
+  }>;
+  note?: Array<{ text: string }>;
+  derivedFrom?: FHIRReference[];
+}
+
+export interface FHIRMedicationRequest {
+  resourceType: "MedicationRequest";
+  id: string;
+  status: string;
+  intent: string;
+  medicationCodeableConcept: FHIRCodeableConcept;
+  subject: FHIRReference;
+  authoredOn?: string | null;
+  requester?: FHIRReference | null;
+  dosageInstruction?: Array<{
+    text?: string;
+    route?: { text?: string };
+    timing?: { code?: { text?: string } };
+    patientInstruction?: string;
+  }>;
+  supportingInformation?: FHIRReference[];
+}
+
+export interface FHIRCondition {
+  resourceType: "Condition";
+  id: string;
+  clinicalStatus: FHIRCodeableConcept;
+  verificationStatus: FHIRCodeableConcept;
+  category: FHIRCodeableConcept[];
+  code: FHIRCodeableConcept;
+  subject: FHIRReference;
+  recordedDate?: string | null;
+  evidence?: Array<{
+    detail?: FHIRReference[];
+  }>;
+}
+
+export interface FHIRDiagnosticReport {
+  resourceType: "DiagnosticReport";
+  id: string;
+  status: string;
+  category: FHIRCodeableConcept[];
+  code: FHIRCodeableConcept;
+  subject: FHIRReference;
+  effectiveDateTime?: string | null;
+  issued?: string | null;
+  performer?: FHIRReference[];
+  result?: FHIRReference[];
+  presentedForm?: Array<{
+    contentType?: string;
+    url?: string;
+    title?: string;
+    size?: number;
+  }>;
+}
+
+export interface FHIRDocumentReference {
+  resourceType: "DocumentReference";
+  id: string;
+  status: string;
+  docStatus: string;
+  type: FHIRCodeableConcept;
+  subject: FHIRReference;
+  date?: string | null;
+  author?: FHIRReference[];
+  content: Array<{
+    attachment: {
+      contentType?: string;
+      url?: string;
+      title?: string;
+      size?: number;
+    };
+  }>;
+}
+
+export interface FHIREncounter {
+  resourceType: "Encounter";
+  id: string;
+  status: string;
+  class?: Record<string, any>;
+  subject: FHIRReference;
+  participant?: Array<{ individual?: { display?: string; type?: string } }>;
+  period?: { start?: string; end?: string };
+  serviceProvider?: FHIRReference;
+  diagnosis?: Array<{ condition?: FHIRReference }>;
+}
+
+export interface FHIRBundleEntry {
+  fullUrl: string;
+  resource: any;
+}
+
+export interface FHIRBundle {
+  resourceType: "Bundle";
+  id: string;
+  type: string;
+  timestamp: string;
+  total: number;
+  meta?: Record<string, any>;
+  entry: FHIRBundleEntry[];
+  resources?: any[];
+}
+
+export async function getFhirPatientApi(token: string): Promise<FHIRPatient> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/patient`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Patient data.");
+  }
+  return data;
+}
+
+export async function getFhirObservationsApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/observations`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Observations.");
+  }
+  return data;
+}
+
+export async function getFhirMedicationsApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/medications`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Medications.");
+  }
+  return data;
+}
+
+export async function getFhirConditionsApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/conditions`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Conditions.");
+  }
+  return data;
+}
+
+export async function getFhirDiagnosticReportsApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/diagnostic-reports`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Diagnostic Reports.");
+  }
+  return data;
+}
+
+export async function getFhirDocumentReferencesApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/document-references`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Document References.");
+  }
+  return data;
+}
+
+export async function getFhirEncountersApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/encounters`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to load FHIR Encounters.");
+  }
+  return data;
+}
+
+export async function getFhirExportBundleApi(token: string): Promise<FHIRBundle> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/fhir/export`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to export FHIR Bundle.");
+  }
+  return data;
+}
+
+export interface AuditLogItem {
+  id: string;
+  event_type: string;
+  status: string;
+  resource_id?: string | null;
+  ip_address?: string | null;
+  user_agent?: string | null;
+  created_at: string;
+  details?: Record<string, any> | null;
+}
+
+export async function fetchAuditLogsApi(token: string): Promise<AuditLogItem[]> {
+  const baseUrl = getApiBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/auth/me/audit-logs`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!res.ok) {
+      return [];
+    }
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function updateUserLanguageApi(language: "en" | "ta", token: string): Promise<User> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/auth/me/language`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ preferred_language: language }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Failed to update language.");
+  }
+  return data;
 }
