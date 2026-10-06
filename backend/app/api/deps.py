@@ -64,6 +64,33 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Attempts to retrieve the current user from OAuth2 token if present,
+    returning None instead of raising an HTTPException if no header token is provided.
+    Useful for endpoints supporting optional header or query-parameter authentication.
+    """
+    if not token:
+        return None
+    payload = decode_access_token(token)
+    if not payload or payload.get("type") != "access":
+        return None
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        return None
+    try:
+        user_uuid = uuid.UUID(user_id_str)
+        user = db.query(User).filter(User.id == user_uuid).first()
+        if user and user.is_active:
+            return user
+    except Exception:
+        pass
+    return None
+
+
 def get_current_active_patient(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

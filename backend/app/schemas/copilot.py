@@ -39,7 +39,7 @@ class CopilotChatResponse(BaseModel):
     session_id: uuid.UUID
     message_id: uuid.UUID
     confidence: float = 1.0
-    mode: str = "health_records"  # "document_specific" | "health_records"
+    mode: str = "general"  # "general" | "personal_health" | "mixed_health" | "current_web" | "document_specific"
 
     model_config = {"from_attributes": True}
 

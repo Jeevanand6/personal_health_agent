@@ -409,13 +409,40 @@ class FHIRService:
 
         for ext in extractions:
             doc = db.query(Document).filter(Document.id == ext.document_id).first()
+            # CLINICAL SAFETY GATE: Unverified prescriptions must not produce FHIR MedicationRequest records
+            is_prescription = (
+                (doc and doc.document_type == "PRESCRIPTION")
+                or getattr(ext, "extraction_type", "") == "PRESCRIPTION"
+            )
+            if is_prescription and not getattr(ext, "is_verified", False):
+                continue
+
             sdata = ext.structured_data or {}
             raw_meds = sdata.get("medications", [])
-            doc_date = sdata.get("document_date") or (ext.created_at.strftime("%Y-%m-%d") if ext.created_at else None)
-            doctor_name = sdata.get("doctor_name") or "Treating Physician"
+            
+            raw_date = sdata.get("document_date") or sdata.get("prescription_date")
+            if isinstance(raw_date, dict):
+                doc_date = raw_date.get("normalized_value") or raw_date.get("raw_text") or (ext.created_at.strftime("%Y-%m-%d") if ext.created_at else None)
+            elif isinstance(raw_date, str) and raw_date.strip():
+                doc_date = raw_date.strip()
+            else:
+                doc_date = (ext.created_at.strftime("%Y-%m-%d") if ext.created_at else None)
+
+            raw_doc_name = sdata.get("doctor_name")
+            if isinstance(raw_doc_name, dict):
+                doctor_name = (raw_doc_name.get("normalized_value") or raw_doc_name.get("raw_text") or "Treating Physician").strip()
+            elif isinstance(raw_doc_name, str) and raw_doc_name.strip():
+                doctor_name = raw_doc_name.strip()
+            else:
+                doctor_name = "Treating Physician"
 
             for idx, med in enumerate(raw_meds):
-                med_name = (med.get("name") or "").strip()
+                med_name = ""
+                if isinstance(med.get("name_as_written"), dict):
+                    med_name = (med["name_as_written"].get("normalized_value") or med["name_as_written"].get("raw_text") or "").strip()
+                elif isinstance(med.get("name"), str):
+                    med_name = med.get("name", "").strip()
+
                 # Skip invalid or header lines
                 if not med_name or "PRESCRIBED" in med_name.upper() or len(med_name) < 2:
                     continue

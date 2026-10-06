@@ -138,9 +138,15 @@ class HealthSummaryService:
             )
             structured_data = extraction.structured_data if extraction and extraction.structured_data else {}
 
-            doc_date = structured_data.get("document_date") or doc.upload_date.strftime("%Y-%m-%d")
-            hospital_name = structured_data.get("hospital_name") or None
-            doctor_name = structured_data.get("doctor_name") or None
+            def _extract_str(val: Any) -> Optional[str]:
+                if isinstance(val, dict):
+                    return val.get("normalized_value") or val.get("raw_text") or None
+                return str(val) if val is not None else None
+
+            raw_date = _extract_str(structured_data.get("document_date") or structured_data.get("prescription_date"))
+            doc_date = raw_date or doc.upload_date.strftime("%Y-%m-%d")
+            hospital_name = _extract_str(structured_data.get("hospital_name") or structured_data.get("clinic_name"))
+            doctor_name = _extract_str(structured_data.get("doctor_name"))
 
             source_doc_refs.append(
                 SourceDocumentReference(
@@ -175,38 +181,57 @@ class HealthSummaryService:
                         )
 
             # Process Medications from structured data
+            # CLINICAL SAFETY GATE: Prescriptions must be verified by user before being listed as active medications
+            is_prescription = (
+                doc_type == "PRESCRIPTION"
+                or (extraction and getattr(extraction, "extraction_type", "") == "PRESCRIPTION")
+            )
+            is_verified_doc = bool(extraction and getattr(extraction, "is_verified", False))
+
             raw_meds = structured_data.get("medications") or []
-            for med in raw_meds:
-                if isinstance(med, dict):
-                    name = med.get("name")
-                    if name and name.strip():
-                        clean_name = name.strip()
-                        dosage = med.get("dosage")
-                        freq = med.get("frequency")
-                        instructions = med.get("instructions")
-                        route = med.get("route")
-                        duration = med.get("duration")
+            if not is_prescription or is_verified_doc:
+                for med in raw_meds:
+                    if isinstance(med, dict):
+                        name = None
+                        if isinstance(med.get("name_as_written"), dict):
+                            name = med["name_as_written"].get("normalized_value") or med["name_as_written"].get("raw_text")
+                        elif isinstance(med.get("name"), str):
+                            name = med.get("name")
 
-                        med_finding = f"Prescribed: {clean_name}" + (f" ({dosage})" if dosage else "")
-                        if lang == "ta":
-                            med_finding = f"மருந்து: {clean_name}" + (f" ({dosage})" if dosage else "")
-                        key_findings.append(med_finding)
+                        if name and name.strip():
+                            clean_name = name.strip()
 
-                        med_key = f"{clean_name.lower()}_{dosage or ''}"
-                        if med_key not in seen_medication_names:
-                            seen_medication_names.add(med_key)
-                            medications.append(
-                                MedicationSummaryItem(
-                                    name=clean_name,
-                                    dosage=dosage,
-                                    route=route,
-                                    frequency=freq,
-                                    duration=duration,
-                                    instructions=instructions,
-                                    source_document_id=doc_id_str,
-                                    source_document_title=filename,
+                            def _get_val(fld: Any) -> Optional[str]:
+                                if isinstance(fld, dict):
+                                    return fld.get("normalized_value") or fld.get("raw_text")
+                                return str(fld) if fld is not None else None
+
+                            dosage = _get_val(med.get("dosage"))
+                            freq = _get_val(med.get("frequency"))
+                            instructions = _get_val(med.get("instructions"))
+                            route = _get_val(med.get("route"))
+                            duration = _get_val(med.get("duration"))
+
+                            med_finding = f"Prescribed: {clean_name}" + (f" ({dosage})" if dosage else "")
+                            if lang == "ta":
+                                med_finding = f"மருந்து: {clean_name}" + (f" ({dosage})" if dosage else "")
+                            key_findings.append(med_finding)
+
+                            med_key = f"{clean_name.lower()}_{dosage or ''}"
+                            if med_key not in seen_medication_names:
+                                seen_medication_names.add(med_key)
+                                medications.append(
+                                    MedicationSummaryItem(
+                                        name=clean_name,
+                                        dosage=dosage,
+                                        route=route,
+                                        frequency=freq,
+                                        duration=duration,
+                                        instructions=instructions,
+                                        source_document_id=doc_id_str,
+                                        source_document_title=filename,
+                                    )
                                 )
-                            )
 
             # Process Interpretations from DB (ObservationInterpretation)
             interpretations: List[ObservationInterpretation] = (

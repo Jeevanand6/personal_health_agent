@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from fastapi import (
     APIRouter,
@@ -9,12 +10,14 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
     status,
 )
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from app.api.deps import get_db, get_current_user, verify_document_ownership
+from app.core.config import settings
+from app.api.deps import get_db, get_current_user, get_current_user_optional, verify_document_ownership
 from app.core.security import decode_access_token
 from app.core.rate_limit import get_client_ip
 from app.models.user import User
@@ -39,9 +42,17 @@ from app.schemas.observation_interpretation import (
     ObservationInterpretationListResponse,
     InterpretTriggerResponse,
 )
+from app.schemas.prescription import (
+    PrescriptionExtractionResponse,
+    PrescriptionVerificationRequest,
+    StructuredPrescriptionData,
+)
 from app.services.storage_service import storage_service
 from app.services.ocr_service import ocr_service
 from app.services.ai_extraction_service import ai_extraction_service
+from app.services.prescription_extraction_service import prescription_extraction_service
+from app.services.prescription_preprocessor import prescription_preprocessor
+from app.services.timeline_service import timeline_service
 from app.services.lab_interpretation_engine import lab_interpretation_engine
 from app.services.audit_service import audit_service, AuditEventType
 from app.schemas.copilot import DocumentIndexResponse
@@ -52,11 +63,7 @@ router = APIRouter()
 
 
 def _to_ai_extraction_response(ai_ext: AIExtraction) -> AIExtractionResponse:
-    structured = (
-        StructuredMedicalData.model_validate(ai_ext.structured_data)
-        if isinstance(ai_ext.structured_data, dict)
-        else StructuredMedicalData()
-    )
+    structured = ai_ext.structured_data if isinstance(ai_ext.structured_data, dict) else {}
     return AIExtractionResponse(
         id=ai_ext.id,
         document_id=ai_ext.document_id,
@@ -65,6 +72,10 @@ def _to_ai_extraction_response(ai_ext: AIExtraction) -> AIExtractionResponse:
         processing_time=ai_ext.processing_time,
         structured_data=structured,
         raw_response=ai_ext.raw_response,
+        is_verified=getattr(ai_ext, "is_verified", False),
+        verified_at=getattr(ai_ext, "verified_at", None),
+        verification_audit=getattr(ai_ext, "verification_audit", {}) or {},
+        extraction_type=getattr(ai_ext, "extraction_type", "GENERAL_MEDICAL"),
         created_at=ai_ext.created_at,
         updated_at=ai_ext.updated_at,
     )
@@ -223,7 +234,7 @@ def download_document_file(
     document_id: uuid.UUID,
     request: Request,
     token: Optional[str] = Query(None, description="Auth token for inline browser preview"),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     # Resolve user from header or query token (supporting iframe/img preview)
@@ -470,6 +481,71 @@ async def extract_structured_document_info(
     db: Session = Depends(get_db),
 ):
     doc = verify_document_ownership(db, document_id, current_user.id)
+
+    # If document is a prescription, bypass PaddleOCR and route directly to specialized prescription vision model
+    if doc.document_type == DocumentType.PRESCRIPTION.value:
+        logger.info(
+            f"Document {doc.id} is a prescription; routing directly to prescription vision extractor."
+        )
+        rx_result = await prescription_extraction_service.extract_prescription(
+            file_path=doc.storage_path,
+            mime_type=doc.mime_type,
+            page_num=0,
+        )
+        if not rx_result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=rx_result.get("error") or "Prescription extraction failed to recognize handwriting.",
+            )
+        structured_rx = rx_result["structured_data"]
+        confidence = rx_result.get("confidence_score", 0.85)
+
+        # Upsert AIExtraction
+        existing_ai = db.query(AIExtraction).filter(AIExtraction.document_id == doc.id).first()
+        init_audit = {
+            "status": "AWAITING_HUMAN_VERIFICATION",
+            "extracted_at": datetime.utcnow().isoformat(),
+            "model_name": rx_result["model_name"],
+            "confidence_score": confidence,
+            "is_uncertain": rx_result.get("is_uncertain", False),
+            "preprocessing_metadata": rx_result.get("preprocessing_metadata", {}),
+        }
+        if existing_ai:
+            existing_ai.raw_response = rx_result["raw_response"]
+            existing_ai.structured_data = structured_rx
+            existing_ai.model_name = rx_result["model_name"]
+            existing_ai.confidence_score = confidence
+            existing_ai.processing_time = rx_result["processing_time"]
+            existing_ai.extraction_type = "PRESCRIPTION"
+            existing_ai.verification_audit = init_audit
+            ai_record = existing_ai
+        else:
+            ai_record = AIExtraction(
+                document_id=doc.id,
+                raw_response=rx_result["raw_response"],
+                structured_data=structured_rx,
+                model_name=rx_result["model_name"],
+                confidence_score=confidence,
+                processing_time=rx_result["processing_time"],
+                is_verified=False,
+                extraction_type="PRESCRIPTION",
+                verification_audit=init_audit,
+            )
+            db.add(ai_record)
+
+        doc.processing_status = (
+            ProcessingStatus.LOW_CONFIDENCE.value if rx_result.get("is_uncertain") else ProcessingStatus.COMPLETED.value
+        )
+        db.commit()
+        db.refresh(doc)
+        db.refresh(ai_record)
+
+        return AIExtractTriggerResponse(
+            document_id=doc.id,
+            status=doc.processing_status,
+            message="Prescription extraction completed via medical vision OCR.",
+            extraction=_to_ai_extraction_response(ai_record),
+        )
 
     # 1. If OCR has not been performed yet, run OCR pipeline first
     extraction = (
@@ -838,3 +914,315 @@ async def index_document_chunks(
         chunk_count=count,
         message=f"Indexed {count} vector chunk(s) for document {doc.id}.",
     )
+
+
+@router.post(
+    "/{document_id}/extract-prescription",
+    response_model=PrescriptionExtractionResponse,
+    summary="Extract structured prescription using handwritten medical OCR service with preprocessing and uncertainty scoring",
+)
+async def extract_prescription(
+    document_id: uuid.UUID,
+    request: Request,
+    page: int = Query(0, ge=0, description="Page number to extract (0-indexed)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = verify_document_ownership(db, document_id, current_user.id)
+
+    # Set status to PROCESSING
+    doc.processing_status = ProcessingStatus.PROCESSING.value
+    doc.document_type = DocumentType.PRESCRIPTION.value
+    db.commit()
+    db.refresh(doc)
+
+    logger.info(
+        f"Starting prescription OCR extraction for document {doc.id} ({doc.original_filename})"
+    )
+
+    # Run dedicated prescription extraction service
+    result = await prescription_extraction_service.extract_prescription(
+        file_path=doc.storage_path,
+        mime_type=doc.mime_type,
+        page_num=page,
+    )
+
+    if not result.get("success"):
+        doc.processing_status = ProcessingStatus.FAILED.value
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=result.get("error") or "Prescription extraction failed to recognize handwriting.",
+        )
+
+    structured_dict = result["structured_data"]
+    confidence = result.get("confidence_score", 0.85)
+
+    # Status: LOW_CONFIDENCE if uncertain, COMPLETED if high fidelity
+    if result.get("is_uncertain") or confidence < settings.PRESCRIPTION_CONFIDENCE_THRESHOLD:
+        doc.processing_status = ProcessingStatus.LOW_CONFIDENCE.value
+    else:
+        doc.processing_status = ProcessingStatus.COMPLETED.value
+
+    # Upsert AIExtraction record: ALWAYS set is_verified=False until explicit human review
+    existing_ai = (
+        db.query(AIExtraction)
+        .filter(AIExtraction.document_id == doc.id)
+        .first()
+    )
+
+    init_audit = {
+        "status": "AWAITING_HUMAN_VERIFICATION",
+        "extracted_at": datetime.utcnow().isoformat(),
+        "model_name": result["model_name"],
+        "confidence_score": confidence,
+        "is_uncertain": result.get("is_uncertain", False),
+        "preprocessing_metadata": result.get("preprocessing_metadata", {}),
+    }
+
+    if existing_ai:
+        existing_ai.raw_response = result["raw_response"]
+        existing_ai.structured_data = structured_dict
+        existing_ai.model_name = result["model_name"]
+        existing_ai.confidence_score = confidence
+        existing_ai.processing_time = result["processing_time"]
+        existing_ai.is_verified = False  # Reset verification upon re-extraction
+        existing_ai.verified_at = None
+        existing_ai.verified_by = None
+        existing_ai.extraction_type = "PRESCRIPTION"
+        existing_ai.verification_audit = init_audit
+        ai_record = existing_ai
+    else:
+        ai_record = AIExtraction(
+            document_id=doc.id,
+            raw_response=result["raw_response"],
+            structured_data=structured_dict,
+            model_name=result["model_name"],
+            confidence_score=confidence,
+            processing_time=result["processing_time"],
+            is_verified=False,
+            verified_at=None,
+            verified_by=None,
+            extraction_type="PRESCRIPTION",
+            verification_audit=init_audit,
+        )
+        db.add(ai_record)
+
+    db.commit()
+    db.refresh(doc)
+    db.refresh(ai_record)
+
+    # Record AI_PROCESSING audit event
+    audit_service.log_event(
+        db=db,
+        event_type=AuditEventType.AI_PROCESSING,
+        status="SUCCESS",
+        user_id=current_user.id,
+        resource_id=str(doc.id),
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        details={
+            "pipeline": "prescription_ocr_extraction",
+            "model": ai_record.model_name,
+            "confidence_score": confidence,
+            "medications_count": len(structured_dict.get("medications", [])),
+            "is_uncertain": result.get("is_uncertain", False),
+            "is_verified": False,
+        },
+    )
+
+    validated_structured = StructuredPrescriptionData.model_validate(structured_dict)
+
+    return PrescriptionExtractionResponse(
+        document_id=doc.id,
+        extraction_id=ai_record.id,
+        is_verified=False,
+        verified_at=None,
+        processing_status=doc.processing_status,
+        structured_data=validated_structured,
+        raw_response=ai_record.raw_response,
+        model_name=ai_record.model_name,
+        confidence_score=ai_record.confidence_score,
+        processing_time=ai_record.processing_time,
+        verification_audit=init_audit,
+        preprocessing_metadata=result.get("preprocessing_metadata", {}),
+        message="Prescription extracted successfully. Pending human review before activation.",
+    )
+
+
+@router.post(
+    "/{document_id}/verify-prescription",
+    response_model=PrescriptionExtractionResponse,
+    summary="Confirm and approve prescription extraction with full audit logging of user corrections",
+)
+async def verify_prescription(
+    document_id: uuid.UUID,
+    payload: PrescriptionVerificationRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = verify_document_ownership(db, document_id, current_user.id)
+
+    ai_record = (
+        db.query(AIExtraction)
+        .filter(AIExtraction.document_id == doc.id)
+        .first()
+    )
+
+    if not ai_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No prescription extraction found for this document. Please run extraction first.",
+        )
+
+    # Capture original extraction for audit history
+    original_data = ai_record.structured_data
+
+    # Serialize approved data
+    approved_dict = payload.approved_data.model_dump()
+    corrections_list = [c.model_dump() for c in payload.corrections]
+
+    audit_entry = {
+        "is_verified": True,
+        "verified_at": datetime.utcnow().isoformat(),
+        "verified_by_user_id": str(current_user.id),
+        "user_email": current_user.email,
+        "corrections_count": len(corrections_list),
+        "corrections": corrections_list,
+        "original_raw_extraction": original_data,
+        "verification_notes": payload.notes,
+    }
+
+    # Update database record
+    ai_record.structured_data = approved_dict
+    ai_record.is_verified = True
+    ai_record.verified_at = datetime.utcnow()
+    ai_record.verified_by = current_user.id
+    ai_record.verification_audit = audit_entry
+    ai_record.extraction_type = "PRESCRIPTION"
+
+    # Ensure document type is marked PRESCRIPTION
+    doc.document_type = DocumentType.PRESCRIPTION.value
+    doc.processing_status = ProcessingStatus.COMPLETED.value
+
+    db.commit()
+    db.refresh(ai_record)
+    db.refresh(doc)
+
+    # 1. Synchronize Timeline Events (medications now eligible since is_verified=True)
+    try:
+        timeline_service.sync_user_timeline(db=db, user_id=current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to auto-sync timeline upon prescription verification: {e}")
+
+    # 2. Index vector chunks for Copilot semantic retrieval
+    try:
+        await copilot_retrieval_service.index_document_chunks(
+            db=db, document_id=doc.id, user_id=current_user.id
+        )
+    except Exception as e:
+        logger.warning(f"Failed to auto-index document chunks for copilot: {e}")
+
+    # 3. Log audit event
+    audit_service.log_event(
+        db=db,
+        event_type=AuditEventType.DOCUMENT_VIEW,  # or custom event
+        status="SUCCESS",
+        user_id=current_user.id,
+        resource_id=str(doc.id),
+        ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+        details={
+            "action": "prescription_verification",
+            "corrections_count": len(corrections_list),
+            "medications_verified": len(approved_dict.get("medications", [])),
+        },
+    )
+
+    logger.info(
+        f"Prescription verified successfully for doc {doc.id} by user {current_user.id} "
+        f"({len(corrections_list)} corrections applied)"
+    )
+
+    return PrescriptionExtractionResponse(
+        document_id=doc.id,
+        extraction_id=ai_record.id,
+        is_verified=True,
+        verified_at=ai_record.verified_at,
+        processing_status=doc.processing_status,
+        structured_data=payload.approved_data,
+        raw_response=ai_record.raw_response,
+        model_name=ai_record.model_name,
+        confidence_score=ai_record.confidence_score,
+        processing_time=ai_record.processing_time,
+        verification_audit=audit_entry,
+        message="Prescription verified successfully. Active in Copilot, Timeline, and Medications.",
+    )
+
+
+@router.get(
+    "/{document_id}/prescription-page-preview",
+    summary="Get preprocessed enhanced JPEG image preview of a prescription page for side-by-side verification",
+)
+def get_prescription_page_preview(
+    document_id: uuid.UUID,
+    request: Request,
+    page: int = Query(0, ge=0, description="0-indexed page number"),
+    enhanced: bool = Query(True, description="Apply deskew and contrast enhancement if true"),
+    token: Optional[str] = Query(None, description="Auth token for direct browser <img> src tags"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    # Resolve user from header or query token
+    effective_user_id = None
+    if current_user:
+        effective_user_id = current_user.id
+    elif token:
+        payload = decode_access_token(token)
+        if payload and payload.get("sub"):
+            try:
+                effective_user_id = uuid.UUID(payload.get("sub"))
+            except ValueError:
+                pass
+
+    if not effective_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to view prescription image preview.",
+        )
+
+    doc = verify_document_ownership(db, document_id, effective_user_id)
+
+    if not os.path.exists(doc.storage_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prescription document file not found on disk.",
+        )
+
+    try:
+        if enhanced:
+            bgr_img, _ = prescription_preprocessor.preprocess_prescription(
+                file_path=doc.storage_path,
+                mime_type=doc.mime_type,
+                page_num=page,
+                enable_deskew=True,
+                enable_crop=True,
+                enable_clahe=True,
+            )
+        else:
+            bgr_img, _ = prescription_preprocessor.load_raw_page_image(
+                file_path=doc.storage_path,
+                mime_type=doc.mime_type,
+                page_num=page,
+            )
+
+        jpeg_bytes = prescription_preprocessor.image_to_jpeg_bytes(bgr_img, quality=92)
+        return Response(content=jpeg_bytes, media_type="image/jpeg")
+    except Exception as e:
+        logger.error(f"Failed to generate prescription page preview for {doc.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to render prescription image: {e}",
+        )
+

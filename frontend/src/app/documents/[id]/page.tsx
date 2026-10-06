@@ -54,6 +54,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { useLanguage } from "@/lib/language-context";
+import PrescriptionVerificationView from "@/components/PrescriptionVerificationView";
 
 export default function DocumentDetailsPage() {
   const { id } = useParams();
@@ -71,9 +72,9 @@ export default function DocumentDetailsPage() {
   const [isProcessingOcr, setIsProcessingOcr] = useState<boolean>(false);
   const [isExtractingAI, setIsExtractingAI] = useState<boolean>(false);
   const [isInterpreting, setIsInterpreting] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"interpretations" | "structured" | "cleaned" | "raw">(
-    "interpretations"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "prescription" | "interpretations" | "structured" | "cleaned" | "raw"
+  >("interpretations");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
   const [showRawJson, setShowRawJson] = useState<boolean>(false);
@@ -106,24 +107,34 @@ export default function DocumentDetailsPage() {
       }
 
       // Attempt to load AI structured extraction
+      let loadedAiExt: AIExtraction | null = null;
       try {
-        const aiExt = await getDocumentAIExtractionApi(documentId, token);
-        setAiExtraction(aiExt);
+        loadedAiExt = await getDocumentAIExtractionApi(documentId, token);
+        setAiExtraction(loadedAiExt);
       } catch {
         setAiExtraction(null);
       }
 
       // Attempt to load Lab Interpretations
+      let loadedInterps: ObservationInterpretation[] = [];
       try {
         const interpRes = await getDocumentInterpretationsApi(documentId, token);
-        setInterpretations(interpRes.interpretations);
-        if (interpRes.interpretations.length > 0) {
-          setActiveTab("interpretations");
-        } else {
-          setActiveTab("structured");
-        }
+        loadedInterps = interpRes.interpretations || [];
+        setInterpretations(loadedInterps);
       } catch {
         setInterpretations([]);
+      }
+
+      // Determine initial active tab based on document type
+      if (
+        doc.document_type === "PRESCRIPTION" ||
+        loadedAiExt?.extraction_type === "PRESCRIPTION" ||
+        (loadedAiExt?.structured_data && "medications" in loadedAiExt.structured_data)
+      ) {
+        setActiveTab("prescription");
+      } else if (loadedInterps.length > 0) {
+        setActiveTab("interpretations");
+      } else {
         setActiveTab("structured");
       }
     } catch (err: unknown) {
@@ -230,7 +241,7 @@ export default function DocumentDetailsPage() {
 
       if (result.extraction) {
         setAiExtraction(result.extraction);
-        setActiveTab("structured");
+        setActiveTab(document?.document_type === "PRESCRIPTION" ? "prescription" : "structured");
         setSuccessMessage(
           `AI clinical extraction completed via ${result.extraction.model_name} with ${Math.round(
             result.extraction.confidence_score * 100
@@ -522,6 +533,24 @@ export default function DocumentDetailsPage() {
               )}
             </button>
 
+            {/* Prescription Review Tab Shortcut */}
+            <button
+              onClick={() => setActiveTab("prescription")}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-white shadow-lg transition ${
+                activeTab === "prescription"
+                  ? "bg-emerald-600 ring-2 ring-emerald-400"
+                  : "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40 active:scale-[0.98]"
+              }`}
+            >
+              <Stethoscope className="w-3.5 h-3.5" />
+              <span>{isTamil ? "மருந்துச்சீட்டு சரிபார்" : "Review Prescription"}</span>
+              {aiExtraction?.is_verified ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              )}
+            </button>
+
             {/* Run AI Extraction */}
             <button
               onClick={handleRunAIExtract}
@@ -741,6 +770,27 @@ export default function DocumentDetailsPage() {
             {/* View Tabs */}
             <div className="flex items-center p-1 bg-slate-950 rounded-xl border border-slate-800">
               <button
+                onClick={() => setActiveTab("prescription")}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  activeTab === "prescription"
+                    ? "bg-emerald-600 text-white shadow"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Stethoscope className="w-3.5 h-3.5" />
+                <span>{isTamil ? "மருந்துச்சீட்டு சரிபார்ப்பு" : "Prescription Review"}</span>
+                {aiExtraction?.is_verified ? (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-500/30 text-[10px]">
+                    ✓ Verified
+                  </span>
+                ) : (
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500/30 text-[10px] text-amber-300">
+                    Review
+                  </span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setActiveTab("interpretations")}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                   activeTab === "interpretations"
@@ -838,7 +888,35 @@ export default function DocumentDetailsPage() {
             </div>
           </div>
 
-          {/* TAB 0: LABORATORY INTERPRETATIONS */}
+          {/* TAB 0: PRESCRIPTION EXTRACTION & HUMAN VERIFICATION */}
+          {activeTab === "prescription" && (
+            <div className="p-6">
+              <PrescriptionVerificationView
+                document={document}
+                initialExtraction={aiExtraction}
+                token={token || ""}
+                onExtractionUpdated={(res) => {
+                  setAiExtraction({
+                    id: res.extraction_id || "",
+                    document_id: res.document_id,
+                    model_name: res.model_name,
+                    confidence_score: res.confidence_score,
+                    processing_time: res.processing_time,
+                    structured_data: res.structured_data,
+                    raw_response: res.raw_response,
+                    is_verified: res.is_verified,
+                    verified_at: res.verified_at,
+                    verification_audit: res.verification_audit,
+                    extraction_type: "PRESCRIPTION",
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  });
+                }}
+              />
+            </div>
+          )}
+
+          {/* TAB 1: LABORATORY INTERPRETATIONS */}
           {activeTab === "interpretations" && (
             <div className="p-6">
               {interpretations.length === 0 ? (
@@ -1182,7 +1260,7 @@ export default function DocumentDetailsPage() {
 
                     {structuredData?.diagnoses && structuredData.diagnoses.length > 0 ? (
                       <div className="flex flex-wrap gap-2">
-                        {structuredData.diagnoses.map((diag, idx) => (
+                        {structuredData.diagnoses.map((diag: string, idx: number) => (
                           <div
                             key={idx}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs font-semibold"
@@ -1229,8 +1307,8 @@ export default function DocumentDetailsPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/60">
-                            {structuredData.medications.map((med, idx) => {
-                              const isLowConf = med.confidence < 0.7;
+                            {structuredData.medications.map((med: any, idx: number) => {
+                              const isLowConf = (med.confidence || 0) < 0.7;
                               return (
                                 <tr
                                   key={idx}
@@ -1310,8 +1388,8 @@ export default function DocumentDetailsPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/60">
-                            {structuredData.observations.map((obs, idx) => {
-                              const isLowConf = obs.confidence < 0.7;
+                            {structuredData.observations.map((obs: any, idx: number) => {
+                              const isLowConf = (obs.confidence || 0) < 0.7;
                               return (
                                 <tr
                                   key={idx}

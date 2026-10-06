@@ -85,8 +85,14 @@ class TimelineService:
                 if parsed_dt:
                     event_dt = parsed_dt
 
-            doctor_name = structured_data.get("doctor_name")
-            hospital_name = structured_data.get("hospital_name")
+            def _extract_str(val: Any) -> Optional[str]:
+                if isinstance(val, dict):
+                    res = val.get("normalized_value") or val.get("raw_text")
+                    return str(res).strip() if res else None
+                return str(val).strip() if val is not None and str(val).strip() else None
+
+            doctor_name = _extract_str(structured_data.get("doctor_name"))
+            hospital_name = _extract_str(structured_data.get("hospital_name") or structured_data.get("clinic_name"))
 
             # 1. DOCUMENT EVENT
             doc_event_type = TimelineEventType.DOCUMENT.value
@@ -134,7 +140,7 @@ class TimelineService:
                     f"Consultation with {doctor_name}"
                     if doctor_name
                     else f"Medical Encounter at {hospital_name}"
-                )
+                )[:240]
                 encounter_key = (doc_id_str, TimelineEventType.ENCOUNTER.value, encounter_title.strip().lower())
                 if encounter_key not in existing_keys:
                     enc_desc = f"Clinical encounter documented in {doc_title}."
@@ -194,46 +200,66 @@ class TimelineService:
                         new_events_count += 1
 
             # 4. MEDICATION EVENTS
-            meds = structured_data.get("medications") or []
-            for med in meds:
-                if isinstance(med, dict):
-                    m_name = med.get("name")
-                    if m_name and m_name.strip():
-                        dosage = med.get("dosage") or ""
-                        freq = med.get("frequency") or ""
-                        instructions = med.get("instructions") or ""
-                        med_title = f"Prescription: {m_name.strip()}" + (f" ({dosage})" if dosage else "")
-                        med_key = (doc_id_str, TimelineEventType.MEDICATION.value, med_title.strip().lower())
-                        if med_key not in existing_keys:
-                            desc_lines = []
-                            if dosage:
-                                desc_lines.append(f"Dosage: {dosage}")
-                            if freq:
-                                desc_lines.append(f"Frequency: {freq}")
-                            if instructions:
-                                desc_lines.append(f"Instructions: {instructions}")
-                            med_desc = " | ".join(desc_lines) if desc_lines else "Prescribed medication on record."
+            # CLINICAL SAFETY GATE: Prescriptions must be approved/verified by user before appearing on timeline
+            is_prescription = (
+                doc_type == "PRESCRIPTION"
+                or (extraction and getattr(extraction, "extraction_type", "") == "PRESCRIPTION")
+            )
+            is_verified_doc = bool(extraction and getattr(extraction, "is_verified", False))
 
-                            db.add(
-                                TimelineEvent(
-                                    id=uuid.uuid4(),
-                                    user_id=user_id,
-                                    event_type=TimelineEventType.MEDICATION.value,
-                                    event_date=event_dt,
-                                    title=med_title,
-                                    description=med_desc,
-                                    source_document_id=doc.id,
-                                    source_document_title=doc_title,
-                                    metadata_json={
-                                        "medication_name": m_name.strip(),
-                                        "dosage": dosage,
-                                        "frequency": freq,
-                                        "instructions": instructions,
-                                    },
+            meds = structured_data.get("medications") or []
+            # Only sync medications if this is not a prescription or if the prescription has been verified
+            if not is_prescription or is_verified_doc:
+                for med in meds:
+                    if isinstance(med, dict):
+                        m_name = None
+                        if isinstance(med.get("name_as_written"), dict):
+                            m_name = med["name_as_written"].get("normalized_value") or med["name_as_written"].get("raw_text")
+                        elif isinstance(med.get("name"), str):
+                            m_name = med.get("name")
+
+                        if m_name and m_name.strip():
+                            def _str_val(v: Any) -> str:
+                                if isinstance(v, dict):
+                                    return v.get("normalized_value") or v.get("raw_text") or ""
+                                return str(v) if v is not None else ""
+
+                            dosage = _str_val(med.get("dosage"))
+                            freq = _str_val(med.get("frequency"))
+                            instructions = _str_val(med.get("instructions"))
+                            med_title = f"Prescription: {m_name.strip()}" + (f" ({dosage})" if dosage else "")
+                            med_key = (doc_id_str, TimelineEventType.MEDICATION.value, med_title.strip().lower())
+                            if med_key not in existing_keys:
+                                desc_lines = []
+                                if dosage:
+                                    desc_lines.append(f"Dosage: {dosage}")
+                                if freq:
+                                    desc_lines.append(f"Frequency: {freq}")
+                                if instructions:
+                                    desc_lines.append(f"Instructions: {instructions}")
+                                med_desc = " | ".join(desc_lines) if desc_lines else "Prescribed medication on record."
+
+                                db.add(
+                                    TimelineEvent(
+                                        id=uuid.uuid4(),
+                                        user_id=user_id,
+                                        event_type=TimelineEventType.MEDICATION.value,
+                                        event_date=event_dt,
+                                        title=med_title,
+                                        description=med_desc,
+                                        source_document_id=doc.id,
+                                        source_document_title=doc_title,
+                                        metadata_json={
+                                            "medication_name": m_name.strip(),
+                                            "dosage": dosage,
+                                            "frequency": freq,
+                                            "instructions": instructions,
+                                            "is_verified": is_verified_doc,
+                                        },
+                                    )
                                 )
-                            )
-                            existing_keys.add(med_key)
-                            new_events_count += 1
+                                existing_keys.add(med_key)
+                                new_events_count += 1
 
             # 5. LABORATORY OBSERVATION EVENTS
             interpretations: List[ObservationInterpretation] = (

@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, TYPE_CHECKING
-from sqlalchemy import String, Float, DateTime, ForeignKey, func, Text, JSON
+from typing import Any, Dict, Optional, TYPE_CHECKING
+import sqlalchemy as sa
+from sqlalchemy import String, Float, DateTime, ForeignKey, func, Text, JSON, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -44,6 +45,23 @@ class AIExtraction(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    verified_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verified_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    verification_audit: Mapped[Dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=sa.text("'{}'")
+    )
+    extraction_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="GENERAL_MEDICAL", server_default="GENERAL_MEDICAL"
     )
 
     document: Mapped["Document"] = relationship("Document", back_populates="ai_extraction")

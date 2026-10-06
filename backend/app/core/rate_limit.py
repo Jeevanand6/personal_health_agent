@@ -96,10 +96,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not settings.RATE_LIMIT_ENABLED:
             return await call_next(request)
 
+        # CORS preflight OPTIONS requests must never be rate limited or blocked
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
 
         # Exempt paths
-        if path in ["/", "/docs", "/redoc", "/openapi.json", "/api/health", "/health"]:
+        if path in [
+            "/",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api/health",
+            "/health",
+            "/api/prescription/health",
+            "/prescription/health",
+        ]:
             return await call_next(request)
 
         client_ip = get_client_ip(request)
@@ -134,18 +147,24 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             logger.warning(
                 f"Rate limit exceeded for IP {client_ip} on tier '{tier}' (path: {path})"
             )
+            origin = request.headers.get("origin")
+            resp_headers = {
+                "Retry-After": str(reset_secs),
+                "X-RateLimit-Limit": str(max_limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(reset_secs),
+            }
+            if origin:
+                resp_headers["Access-Control-Allow-Origin"] = origin
+                resp_headers["Access-Control-Allow-Credentials"] = "true"
+
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={
                     "detail": "Rate limit exceeded. Too many requests. Please wait before retrying.",
                     "retry_after_seconds": reset_secs,
                 },
-                headers={
-                    "Retry-After": str(reset_secs),
-                    "X-RateLimit-Limit": str(max_limit),
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": str(reset_secs),
-                },
+                headers=resp_headers,
             )
 
         response: Response = await call_next(request)

@@ -121,16 +121,76 @@ export interface StructuredMedicalData {
   overall_confidence: number;
 }
 
+export interface PrescriptionField {
+  raw_text: string | null;
+  normalized_value: string | null;
+  confidence: number;
+  is_uncertain: boolean;
+  uncertainty_reason?: string | null;
+  source_page?: number;
+  is_corrected_by_user?: boolean;
+  original_value?: string | null;
+}
+
+export interface PrescribedMedicationItem {
+  name_as_written: PrescriptionField;
+  generic_name?: PrescriptionField | null;
+  strength?: PrescriptionField | null;
+  dosage?: PrescriptionField | null;
+  dosage_form?: PrescriptionField | null;
+  route?: PrescriptionField | null;
+  frequency?: PrescriptionField | null;
+  duration?: PrescriptionField | null;
+  instructions?: PrescriptionField | null;
+  is_uncertain: boolean;
+}
+
+export interface StructuredPrescriptionData {
+  doctor_name: PrescriptionField;
+  clinic_name: PrescriptionField;
+  patient_name: PrescriptionField;
+  patient_age: PrescriptionField;
+  patient_sex: PrescriptionField;
+  prescription_date: PrescriptionField;
+  diagnosis: PrescriptionField;
+  notes: PrescriptionField;
+  medications: PrescribedMedicationItem[];
+  instructions_and_follow_up: PrescriptionField;
+  overall_confidence: number;
+  is_uncertain: boolean;
+  model_metadata?: Record<string, any>;
+}
+
 export interface AIExtraction {
   id: string;
   document_id: string;
   model_name: string;
   confidence_score: number;
   processing_time: number;
-  structured_data: StructuredMedicalData;
+  structured_data: any;
   raw_response?: string | null;
+  is_verified?: boolean;
+  verified_at?: string | null;
+  verification_audit?: Record<string, any>;
+  extraction_type?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PrescriptionExtractionResponse {
+  document_id: string;
+  extraction_id?: string;
+  is_verified: boolean;
+  verified_at?: string | null;
+  processing_status: ProcessingStatusEnum;
+  structured_data: StructuredPrescriptionData;
+  raw_response?: string;
+  model_name: string;
+  confidence_score: number;
+  processing_time: number;
+  verification_audit?: Record<string, any>;
+  preprocessing_metadata?: Record<string, any>;
+  message: string;
 }
 
 export interface AIExtractTriggerResult {
@@ -389,19 +449,40 @@ export async function runDocumentOcrApi(
   token: string
 ): Promise<OCRTriggerResult> {
   const baseUrl = getApiBaseUrl();
-  const res = await fetch(`${baseUrl}/api/documents/${id}/ocr`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  try {
+    const res = await fetch(`${baseUrl}/api/documents/${id}/ocr`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.detail || "Failed to run OCR on document.");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errDetail =
+        typeof data.detail === "string"
+          ? data.detail
+          : typeof data.message === "string"
+          ? data.message
+          : JSON.stringify(data.detail || data) || `OCR failed (HTTP ${res.status})`;
+      throw new Error(errDetail);
+    }
+    return data;
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes("Failed to fetch") ||
+        err.message.includes("NetworkError") ||
+        err.message.includes("Network error") ||
+        err.message.includes("Load failed"))
+    ) {
+      throw new Error(
+        `Unable to reach backend OCR service at ${baseUrl}/api/documents/${id}/ocr. Please verify the backend container is running.`
+      );
+    }
+    throw err;
   }
-  return data;
 }
 
 export async function getDocumentExtractionApi(
@@ -429,19 +510,40 @@ export async function triggerAIExtractionApi(
   token: string
 ): Promise<AIExtractTriggerResult> {
   const baseUrl = getApiBaseUrl();
-  const res = await fetch(`${baseUrl}/api/documents/${id}/extract`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  try {
+    const res = await fetch(`${baseUrl}/api/documents/${id}/extract`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.detail || "AI medical information extraction failed.");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errDetail =
+        typeof data.detail === "string"
+          ? data.detail
+          : typeof data.message === "string"
+          ? data.message
+          : JSON.stringify(data.detail || data) || `AI extraction failed (HTTP ${res.status})`;
+      throw new Error(errDetail);
+    }
+    return data;
+  } catch (err: any) {
+    if (
+      err.message &&
+      (err.message.includes("Failed to fetch") ||
+        err.message.includes("NetworkError") ||
+        err.message.includes("Network error") ||
+        err.message.includes("Load failed"))
+    ) {
+      throw new Error(
+        `Unable to reach backend AI extraction service at ${baseUrl}/api/documents/${id}/extract. Please check if the backend is running.`
+      );
+    }
+    throw err;
   }
-  return data;
 }
 
 export async function getDocumentAIExtractionApi(
@@ -463,6 +565,205 @@ export async function getDocumentAIExtractionApi(
   }
   return data;
 }
+
+export async function checkPrescriptionHealthApi(): Promise<{
+  status: "ok" | "degraded";
+  service: string;
+  model: string;
+  error?: string;
+  hardware?: Record<string, any>;
+}> {
+  const baseUrl = getApiBaseUrl();
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch(`${baseUrl}/api/prescription/health`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return {
+      status: "degraded",
+      service: "prescription-extraction",
+      model: "unavailable",
+      error:
+        err.name === "AbortError"
+          ? "Prescription health check timed out."
+          : "Unable to connect to the prescription AI service. Please verify the backend is running.",
+    };
+  }
+}
+
+export async function extractPrescriptionDirectApi(
+  file: File,
+  token?: string
+): Promise<{
+  success: boolean;
+  extraction: StructuredPrescriptionData;
+  processing: {
+    preprocessed: boolean;
+    model: string;
+    backend?: string;
+    processing_time_seconds?: number;
+  };
+  document_id?: string;
+  extraction_id?: string;
+  is_verified?: boolean;
+}> {
+  const baseUrl = getApiBaseUrl();
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120-second timeout
+
+  try {
+    const res = await fetch(`${baseUrl}/api/prescription/extract`, {
+      method: "POST",
+      headers,
+      body: formData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errDetail =
+        typeof data.detail === "string"
+          ? data.detail
+          : typeof data.message === "string"
+          ? data.message
+          : JSON.stringify(data.detail || data) || `Prescription extraction failed (HTTP ${res.status})`;
+      throw new Error(errDetail);
+    }
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error(
+        "Prescription AI inference timed out after 120 seconds. Vision inference requires additional processing time or GPU acceleration."
+      );
+    }
+    if (
+      err.message &&
+      (err.message.includes("Failed to fetch") ||
+        err.message.includes("NetworkError") ||
+        err.message.includes("Network error"))
+    ) {
+      throw new Error(
+        `Unable to connect to the prescription AI service at ${baseUrl}. Please check backend logs or CORS settings.`
+      );
+    }
+    throw err;
+  }
+}
+
+export async function extractPrescriptionApi(
+  id: string,
+  token: string,
+  page: number = 0
+): Promise<PrescriptionExtractionResponse> {
+  const baseUrl = getApiBaseUrl();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120-second timeout
+
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/documents/${id}/extract-prescription?page=${page}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timeoutId);
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errDetail =
+        typeof data.detail === "string"
+          ? data.detail
+          : typeof data.message === "string"
+          ? data.message
+          : JSON.stringify(data.detail || data) || `Handwritten prescription extraction failed (HTTP ${res.status})`;
+      throw new Error(errDetail);
+    }
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error(
+        "Prescription AI inference timed out after 120 seconds. Vision model inference requires additional processing time or GPU acceleration."
+      );
+    }
+    if (
+      err.message &&
+      (err.message.includes("Failed to fetch") ||
+        err.message.includes("NetworkError") ||
+        err.message.includes("Network error"))
+    ) {
+      throw new Error(
+        `Unable to connect to the prescription AI service at ${baseUrl}. Please check if the backend is running.`
+      );
+    }
+    throw err;
+  }
+}
+
+export async function verifyPrescriptionApi(
+  id: string,
+  token: string,
+  payload: {
+    approved_data: StructuredPrescriptionData;
+    corrections: Array<{
+      field_path: string;
+      original_value: string | null;
+      corrected_value: string | null;
+      reason?: string | null;
+    }>;
+    notes?: string;
+  }
+): Promise<PrescriptionExtractionResponse> {
+  const baseUrl = getApiBaseUrl();
+  const res = await fetch(`${baseUrl}/api/documents/${id}/verify-prescription`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "Prescription verification failed.");
+  }
+  return data;
+}
+
+export function getPrescriptionPagePreviewUrl(
+  id: string,
+  token: string,
+  page: number = 0,
+  enhanced: boolean = true
+): string {
+  const baseUrl = getApiBaseUrl();
+  return `${baseUrl}/api/documents/${id}/prescription-page-preview?page=${page}&enhanced=${enhanced}&token=${encodeURIComponent(token)}`;
+}
+
 
 export interface ObservationInterpretation {
   id: string;
@@ -1291,7 +1592,7 @@ export interface CopilotChatResponse {
   session_id: string;
   message_id: string;
   confidence: number;
-  mode: "document_specific" | "health_records";
+  mode: "general" | "personal_health" | "mixed_health" | "current_web" | "document_specific" | string;
 }
 
 export interface ChatMessageItem {

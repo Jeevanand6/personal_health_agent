@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_BASE_URL: Union[str, None] = None
 
+    # Medical Prescription OCR & Extraction Configuration
+    # Options: "auto", "huggingface_endpoint", "huggingface_local", "gemini_vision", "hybrid_ocr_llm"
+    PRESCRIPTION_OCR_BACKEND: str = "auto"
+    HUGGINGFACE_API_KEY: Union[str, None] = None
+    HF_PRESCRIPTION_MODEL_ID: str = "KushagraWadhwa/medical-prescription-ocr-india"
+    HF_PRESCRIPTION_ENDPOINT_URL: Union[str, None] = None
+    PRESCRIPTION_CONFIDENCE_THRESHOLD: float = 0.70
+
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",

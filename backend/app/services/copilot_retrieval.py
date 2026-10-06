@@ -357,6 +357,8 @@ class CopilotRetrievalService:
         """
         Retrieves verified prescribed medications from AIExtraction records.
         Supports filtering by target medicine name.
+        CLINICAL SAFETY GATE: Only approved/verified prescriptions are returned.
+        Unverified OCR predictions are never cited as confirmed medication orders.
         """
         query = (
             db.query(AIExtraction, Document)
@@ -370,21 +372,66 @@ class CopilotRetrievalService:
         meds_list: List[Dict[str, Any]] = []
 
         for ai_ext, doc in records:
+            # CLINICAL SAFETY GATE: Prescriptions MUST be confirmed by user before being used by Copilot
+            is_prescription = (
+                doc.document_type == "PRESCRIPTION"
+                or getattr(ai_ext, "extraction_type", "") == "PRESCRIPTION"
+            )
+            if is_prescription and not getattr(ai_ext, "is_verified", False):
+                logger.info(
+                    f"Safety Gate: Skipping unverified prescription extraction {ai_ext.id} "
+                    f"for document {doc.id} from Copilot retrieval."
+                )
+                continue
+
             if isinstance(ai_ext.structured_data, dict):
                 extracted_meds = ai_ext.structured_data.get("medications", [])
                 for med in extracted_meds:
-                    if isinstance(med, dict) and med.get("name"):
-                        m_name = med.get("name")
-                        if target_med_name:
-                            # Filter specifically for the requested medication
-                            if target_med_name.lower() not in m_name.lower():
-                                continue
+                    if not isinstance(med, dict):
+                        continue
 
-                        med_item = dict(med)
-                        med_item["source_document_id"] = str(doc.id)
-                        med_item["source_document_name"] = doc.original_filename
-                        med_item["extraction_date"] = ai_ext.created_at.strftime("%Y-%m-%d")
-                        meds_list.append(med_item)
+                    # Extract medication name supporting both StructuredPrescriptionData, drug_name schema, and legacy format
+                    m_name = None
+                    if isinstance(med.get("name_as_written"), dict):
+                        m_name = med["name_as_written"].get("normalized_value") or med["name_as_written"].get("raw_text")
+                    elif isinstance(med.get("drug_name"), dict):
+                        m_name = med["drug_name"].get("normalized_value") or med["drug_name"].get("raw_text")
+                    elif isinstance(med.get("drug_name"), str):
+                        m_name = med.get("drug_name")
+                    elif isinstance(med.get("name"), str):
+                        m_name = med.get("name")
+
+                    if not m_name or not m_name.strip():
+                        continue
+
+                    clean_med_name = m_name.strip()
+                    if target_med_name and target_med_name.lower() not in clean_med_name.lower():
+                        continue
+
+                    def _extract_val(field_val: Any) -> Optional[str]:
+                        if isinstance(field_val, dict):
+                            return field_val.get("normalized_value") or field_val.get("raw_text")
+                        return str(field_val) if field_val is not None else None
+
+                    dosage = _extract_val(med.get("dosage"))
+                    freq = _extract_val(med.get("frequency"))
+                    dur = _extract_val(med.get("duration"))
+                    route = _extract_val(med.get("route"))
+                    instructions = _extract_val(med.get("instructions"))
+
+                    med_item = {
+                        "name": clean_med_name,
+                        "dosage": dosage,
+                        "frequency": freq,
+                        "duration": dur,
+                        "route": route,
+                        "instructions": instructions,
+                        "is_verified": getattr(ai_ext, "is_verified", False),
+                        "source_document_id": str(doc.id),
+                        "source_document_name": doc.original_filename,
+                        "extraction_date": ai_ext.created_at.strftime("%Y-%m-%d") if ai_ext.created_at else None,
+                    }
+                    meds_list.append(med_item)
 
         return meds_list
 

@@ -39,6 +39,7 @@ interface DisplayMessage {
   sources?: SourceReference[];
   disclaimer?: string;
   confidence?: number;
+  mode?: string;
   timestamp: string;
 }
 
@@ -234,6 +235,7 @@ function CopilotChatContent() {
         sources: res.sources,
         disclaimer: res.disclaimer,
         confidence: res.confidence,
+        mode: res.mode,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -446,10 +448,27 @@ function CopilotChatContent() {
                       <span className="text-xs">{isTamil ? "ஹெல்த் கோபைலட்" : "Health Copilot"}</span>
                     </div>
 
-                    <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      <span>{isTamil ? "ஆவணங்களில் சரிபார்க்கப்பட்டது" : "Based on your uploaded records"}</span>
-                    </span>
+                    {msg.mode === "general" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <Sparkles className="w-3 h-3 text-indigo-600" />
+                        <span>{isTamil ? "பொதுவான AI உதவி" : "General AI Assistant"}</span>
+                      </span>
+                    ) : msg.mode === "current_web" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-medium bg-sky-50 text-sky-700 border border-sky-200">
+                        <ExternalLink className="w-3 h-3 text-sky-600" />
+                        <span>{isTamil ? "நேரலை இணையத் தகவல்" : "Live Web Information"}</span>
+                      </span>
+                    ) : msg.mode === "mixed_health" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-medium bg-teal-50 text-teal-800 border border-teal-200">
+                        <CheckCircle2 className="w-3 h-3 text-teal-600" />
+                        <span>{isTamil ? "ஆவணங்கள் + மருத்துவ அறிவு" : "Records + Medical Knowledge"}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>{isTamil ? "ஆவணங்களில் சரிபார்க்கப்பட்டது" : "Based on your uploaded records"}</span>
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -554,8 +573,8 @@ function CopilotChatContent() {
             onKeyDown={handleKeyDown}
             placeholder={
               isTamil
-                ? "உங்கள் மருத்துவப் பதிவுகள் பற்றி கேளுங்கள் (उदा: மருத்துவர் யார்? மருந்துகள் என்ன?)..."
-                : "Ask about your prescriptions, lab reports, doctor advice, or medical history..."
+                ? "மருத்துவப் பதிவுகள், மருத்துவ அறிவு அல்லது பொதுவான கேள்விகளைக் கேட்கவும்..."
+                : "Ask about your health records, medical questions, or general topics (e.g. Python, workout, weather)..."
             }
             rows={1}
             disabled={isSending}

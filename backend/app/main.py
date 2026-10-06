@@ -8,7 +8,8 @@ from app.core.logging import logger
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.core.rate_limit import RateLimitMiddleware
 from app.api.v1.router import api_router
-from app.api.v1.endpoints import health, auth, documents, lab, health_summary, timeline, fhir, copilot
+from app.api.v1.endpoints import health, auth, documents, lab, health_summary, timeline, fhir, copilot, prescription
+from app.services.prescription_extractor import prescription_extractor
 from app.db.base import Base
 from app.db.session import engine
 import app.models  # noqa: F401
@@ -41,16 +42,10 @@ if not origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Authorization",
-        "Content-Type",
-        "Accept",
-        "Origin",
-        "X-Requested-With",
-        "X-Request-ID",
-    ],
+    allow_headers=["*"],
     expose_headers=[
         "Content-Disposition",
         "X-Request-ID",
@@ -69,6 +64,12 @@ def on_startup():
     # Initialize and verify database tables
     Base.metadata.create_all(bind=engine)
     logger.info("Security hardening verified. Database schema initialized.")
+    # Initialize prescription model once on startup (singleton)
+    try:
+        prescription_extractor.initialize()
+        logger.info("Prescription vision extractor initialized on startup.")
+    except Exception as e:
+        logger.warning(f"Prescription extractor startup initialization note: {e}")
 
 
 @app.middleware("http")
@@ -87,12 +88,20 @@ async def log_requests(request: Request, call_next):
             f"Unhandled exception on [{req_id}] {request.url.path}: {exc}",
             exc_info=True,
         )
+        origin = request.headers.get("origin")
+        err_headers = {}
+        if origin:
+            err_headers["Access-Control-Allow-Origin"] = origin
+            err_headers["Access-Control-Allow-Credentials"] = "true"
+
+        detail_msg = f"Internal Server Error: {str(exc)}" if settings.DEBUG else "An internal server error occurred. Please try again later."
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
-                "detail": "An internal server error occurred. Please try again later.",
+                "detail": detail_msg,
                 "request_id": req_id,
             },
+            headers=err_headers,
         )
 
 
@@ -110,6 +119,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 "message": error.get("msg", "Invalid input value"),
             }
         )
+    origin = request.headers.get("origin")
+    err_headers = {}
+    if origin:
+        err_headers["Access-Control-Allow-Origin"] = origin
+        err_headers["Access-Control-Allow-Credentials"] = "true"
+
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
@@ -117,20 +132,27 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "errors": sanitized_errors,
             "request_id": req_id,
         },
+        headers=err_headers,
     )
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Standardized clean HTTP error response."""
+    """Standardized clean HTTP error response with CORS preservation."""
     req_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    origin = request.headers.get("origin")
+    resp_headers = dict(exc.headers) if exc.headers else {}
+    if origin and "Access-Control-Allow-Origin" not in resp_headers:
+        resp_headers["Access-Control-Allow-Origin"] = origin
+        resp_headers["Access-Control-Allow-Credentials"] = "true"
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
             "request_id": req_id,
         },
-        headers=exc.headers,
+        headers=resp_headers,
     )
 
 
@@ -139,6 +161,8 @@ app.include_router(health.router, prefix="/api", tags=["Health"])
 app.include_router(health.router, prefix="", tags=["Health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(prescription.router, prefix="/api/prescription", tags=["Prescription"])
+app.include_router(prescription.router, prefix="/prescription", tags=["Prescription"])
 app.include_router(lab.router, prefix="/api/lab", tags=["Laboratory"])
 app.include_router(health_summary.router, prefix="/api/health-summary", tags=["Health Summary"])
 app.include_router(timeline.router, prefix="/api/timeline", tags=["Timeline"])

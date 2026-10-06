@@ -49,8 +49,12 @@ class AIExtractionResponse(BaseModel):
     model_name: str
     confidence_score: float
     processing_time: float
-    structured_data: StructuredMedicalData
+    structured_data: Any
     raw_response: Optional[str] = None
+    is_verified: bool = False
+    verified_at: Optional[datetime] = None
+    verification_audit: Dict[str, Any] = Field(default_factory=dict)
+    extraction_type: str = "GENERAL_MEDICAL"
     created_at: datetime
     updated_at: datetime
 

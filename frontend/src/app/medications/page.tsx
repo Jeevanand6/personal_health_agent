@@ -249,6 +249,28 @@ export default function MedicationsPage() {
         />
       )}
 
+      {/* Clinical Safety & Verification Banner */}
+      <div className="p-4 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-start justify-between gap-3 text-xs text-teal-900 leading-relaxed">
+        <div className="flex items-start gap-2.5">
+          <ShieldCheck className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-bold text-teal-950 uppercase tracking-wider text-[11px] mb-0.5">
+              Verified Medications Only
+            </h4>
+            <p className="text-teal-800 text-[11px]">
+              Every medication listed below is grounded exclusively in medical records and prescriptions
+              confirmed by you. OCR predictions are never treated as confirmed orders until human verification.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/documents"
+          className="shrink-0 px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs transition shadow-2xs"
+        >
+          Review Prescriptions
+        </Link>
+      </div>
+
       {/* KPI Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
