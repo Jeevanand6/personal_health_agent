@@ -98,11 +98,13 @@ export default function DocumentDetailsPage() {
       const doc = await getDocumentApi(documentId, token);
       setDocument(doc);
 
-      // Attempt to load OCR extraction
-      try {
+      const hasCompletedOcr =
+        doc.processing_status === "COMPLETED" ||
+        doc.processing_status === "LOW_CONFIDENCE";
+      if (hasCompletedOcr) {
         const ext = await getDocumentExtractionApi(documentId, token);
         setExtraction(ext);
-      } catch {
+      } else {
         setExtraction(null);
       }
 
@@ -201,13 +203,12 @@ export default function DocumentDetailsPage() {
 
       if (result.extraction) {
         setExtraction(result.extraction);
-      } else {
-        try {
-          const ext = await getDocumentExtractionApi(documentId, token);
-          setExtraction(ext);
-        } catch {
-          // ignore
-        }
+      } else if (
+        result.processing_status === "COMPLETED" ||
+        result.processing_status === "LOW_CONFIDENCE"
+      ) {
+        const ext = await getDocumentExtractionApi(documentId, token);
+        setExtraction(ext);
       }
 
       if (result.processing_status === "COMPLETED") {

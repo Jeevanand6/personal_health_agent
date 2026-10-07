@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -27,6 +27,10 @@ import {
   AlertCircle,
   Eye,
   X,
+  CalendarDays,
+  FileDown,
+  UserRound,
+  ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { useLanguage } from "@/lib/language-context";
@@ -47,6 +51,7 @@ import {
   FHIRDocumentReference,
   FHIREncounter,
   FHIRBundle,
+  getApiBaseUrl,
 } from "@/lib/api";
 
 type TabType =
@@ -69,6 +74,8 @@ export default function HealthDataPage() {
   const [activeTab, setActiveTab] = useState<TabType>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [copiedAbha, setCopiedAbha] = useState<boolean>(false);
+  const [rawFhirView, setRawFhirView] = useState<boolean>(false);
+  const [expandedTrends, setExpandedTrends] = useState<Record<string, boolean>>({});
 
   // Loaded FHIR Data
   const [patient, setPatient] = useState<FHIRPatient | null>(null);
@@ -179,22 +186,130 @@ export default function HealthDataPage() {
     URL.revokeObjectURL(url);
   };
 
-  if (authLoading || (!user && loading)) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 text-teal-600 animate-spin" />
-          <p className="text-sm font-semibold text-slate-600">
-            {t("common", "loading", "Loading health data...")}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   const mockAbhaMeta = patient?.mock_abha_meta;
   const mockAbhaId = mockAbhaMeta?.mock_abha_id || "91-4521-8890-1234";
   const mockAbhaAddr = mockAbhaMeta?.mock_abha_address || "demo_user@abdm";
+
+  const patientName =
+    patient?.name?.[0]?.text || user?.full_name || (isTamil ? "நோயாளர்" : "Patient");
+  const abhaIdentifier =
+    patient?.identifier?.find((identifier) =>
+      `${identifier.system || ""} ${identifier.type?.text || ""}`.toLowerCase().includes("abha")
+    )?.value ||
+    patient?.mock_abha_meta?.mock_abha_id ||
+    "";
+  const observationGroups = useMemo(() => {
+    const grouped: Record<string, FHIRObservation[]> = {};
+    observations.forEach((observation) => {
+      const name = observation.code?.text?.trim();
+      if (!name) return;
+      const key = name.toLocaleLowerCase();
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(observation);
+    });
+    return Object.entries(grouped)
+      .map(([key, items]) => {
+        const history = [...items].sort((first, second) => {
+          const firstDate = first.effectiveDateTime
+            ? new Date(first.effectiveDateTime).getTime()
+            : 0;
+          const secondDate = second.effectiveDateTime
+            ? new Date(second.effectiveDateTime).getTime()
+            : 0;
+          return (Number.isNaN(secondDate) ? 0 : secondDate) - (Number.isNaN(firstDate) ? 0 : firstDate);
+        });
+        const latest = history[0];
+        const interpretation = latest?.interpretation?.[0]?.text?.toUpperCase() || "";
+        const status = interpretation.includes("HIGH") || interpretation === "H"
+          ? "High"
+          : interpretation.includes("LOW") || interpretation === "L"
+          ? "Low"
+          : interpretation.includes("NORMAL") || interpretation === "N"
+          ? "Normal"
+          : "Not specified";
+        return { key, name: latest?.code?.text || key, latest, history, status };
+      })
+      .sort((first, second) => {
+        const firstDate = first.latest?.effectiveDateTime
+          ? new Date(first.latest.effectiveDateTime).getTime()
+          : 0;
+        const secondDate = second.latest?.effectiveDateTime
+          ? new Date(second.latest.effectiveDateTime).getTime()
+          : 0;
+        return (Number.isNaN(secondDate) ? 0 : secondDate) - (Number.isNaN(firstDate) ? 0 : firstDate);
+      });
+  }, [observations]);
+
+  const visitsAndRecords = useMemo(() => {
+    const items: Array<{
+      key: string;
+      date?: string | null;
+      clinician?: string;
+      facility?: string;
+      title: string;
+      downloadUrl?: string;
+    }> = [];
+    reports.forEach((report) => {
+      const form = report.presentedForm?.find((item) => item.url);
+      items.push({
+        key: `report-${report.id}`,
+        date: report.effectiveDateTime || report.issued,
+        clinician: report.performer?.[0]?.display,
+        title: report.code?.text || (isTamil ? "பரிசோதனை அறிக்கை" : "Diagnostic report"),
+        downloadUrl: form?.url,
+      });
+    });
+    documents.forEach((document) => {
+      const attachment = document.content?.find((item) => item.attachment?.url)?.attachment;
+      items.push({
+        key: `document-${document.id}`,
+        date: document.date,
+        clinician: document.author?.[0]?.display,
+        title:
+          attachment?.title ||
+          document.type?.text ||
+          (isTamil ? "மருத்துவ ஆவணம்" : "Medical record"),
+        downloadUrl: attachment?.url,
+      });
+    });
+    encounters.forEach((encounter) => {
+      items.push({
+        key: `encounter-${encounter.id}`,
+        date: encounter.period?.start,
+        clinician: encounter.participant?.[0]?.individual?.display,
+        facility: encounter.serviceProvider?.display,
+        title: isTamil ? "சுகாதார வருகை" : "Health visit",
+      });
+    });
+    const sortedItems = items.sort((first, second) => {
+      const firstDate = first.date ? new Date(first.date).getTime() : 0;
+      const secondDate = second.date ? new Date(second.date).getTime() : 0;
+      return (Number.isNaN(secondDate) ? 0 : secondDate) - (Number.isNaN(firstDate) ? 0 : firstDate);
+    });
+    const seenDownloads = new Set<string>();
+    return sortedItems.filter((item) => {
+      if (!item.downloadUrl) return true;
+      if (seenDownloads.has(item.downloadUrl)) return false;
+      seenDownloads.add(item.downloadUrl);
+      return true;
+    });
+  }, [documents, encounters, isTamil, reports]);
+
+  const formatPatientDate = (value?: string | null) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(isTamil ? "ta-IN" : "en", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(date);
+  };
+
+  const formatDownloadUrl = (url?: string) => {
+    if (!url) return undefined;
+    return /^https?:\/\//i.test(url) ? url : `${getApiBaseUrl()}${url.startsWith("/") ? "" : "/"}${url}`;
+  };
 
   // Filtered lists
   const filteredObs = observations.filter((o) =>
@@ -252,9 +367,57 @@ export default function HealthDataPage() {
       : true
   );
 
+  if (authLoading || (!user && loading)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="w-8 h-8 text-teal-600 animate-spin" />
+          <p className="text-sm font-semibold text-slate-600">
+            {t("common", "loading", "Loading health data...")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto space-y-6">
+        <div className="flex justify-end">
+          <div
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1"
+            role="group"
+            aria-label={isTamil ? "பார்வை முறை" : "Health records view mode"}
+          >
+            <button
+              type="button"
+              aria-pressed={!rawFhirView}
+              onClick={() => setRawFhirView(false)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                !rawFhirView
+                  ? "bg-teal-700 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {isTamil ? "நோயாளர் பார்வை" : "Patient View"}
+            </button>
+            <button
+              type="button"
+              aria-pressed={rawFhirView}
+              onClick={() => setRawFhirView(true)}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                rawFhirView
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {isTamil ? "Raw FHIR பார்வை" : "Raw FHIR View"}
+            </button>
+          </div>
+        </div>
+
+        {rawFhirView ? (
+          <>
         {/* Top Header Card */}
         <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
@@ -1287,6 +1450,384 @@ export default function HealthDataPage() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+          </>
+        ) : (
+          <div className="mx-auto max-w-5xl space-y-6">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
+              {isTamil ? "சுகாதார மேலோட்டம்" : "Health overview"}
+            </h1>
+            <header className="rounded-xl border border-slate-200 bg-white p-5 sm:p-7">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-teal-50 text-teal-800">
+                    <UserRound className="h-6 w-6" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-semibold tracking-tight text-slate-950">
+                      {patientName}
+                    </h2>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
+                      {patient?.gender && <span className="capitalize">{patient.gender}</span>}
+                      {patient?.birthDate && (
+                        <span>
+                          {isTamil ? "பிறந்த தேதி" : "Date of birth"}:{" "}
+                          {formatPatientDate(patient.birthDate)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {abhaIdentifier && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">
+                        {patient?.mock_abha_meta?.is_official_abdm
+                          ? "ABHA Number"
+                          : isTamil
+                          ? "டெமோ ABHA எண்"
+                          : "Demo ABHA number"}
+                      </p>
+                      <p className="mt-0.5 font-medium tracking-wide text-slate-900">
+                        {abhaIdentifier}
+                      </p>
+                    </div>
+                  )}
+                  {abhaIdentifier && (
+                    <button
+                      type="button"
+                      onClick={() => copyAbhaToClipboard(abhaIdentifier)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                    >
+                      {copiedAbha ? (
+                        <Check className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+                      ) : (
+                        <Copy className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      {copiedAbha
+                        ? isTamil
+                          ? "நகலெடுக்கப்பட்டது"
+                          : "Copied"
+                        : isTamil
+                        ? "ABHA நகலெடு"
+                        : "Copy ABHA"}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700">
+                <ShieldCheck
+                  className={`h-4 w-4 ${
+                    patient?.mock_abha_meta?.is_official_abdm
+                      ? "text-emerald-700"
+                      : "text-amber-700"
+                  }`}
+                  aria-hidden="true"
+                />
+                {patient?.mock_abha_meta?.is_official_abdm
+                  ? isTamil
+                    ? "அதிகாரப்பூர்வமாக சரிபார்க்கப்பட்டது"
+                    : "Officially verified"
+                  : isTamil
+                  ? "டெமோ அடையாளம் · அதிகாரப்பூர்வமாக சரிபார்க்கப்படவில்லை"
+                  : "Demo identifier · Not officially verified"}
+              </div>
+            </header>
+
+            {error && (
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+                role="alert"
+              >
+                <span>{error}</span>
+                <button
+                  type="button"
+                  onClick={loadAllFhirData}
+                  className="font-semibold underline underline-offset-2"
+                >
+                  {isTamil ? "மீண்டும் முயற்சி" : "Try again"}
+                </button>
+              </div>
+            )}
+
+            <section aria-labelledby="health-metrics-heading">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2
+                  id="health-metrics-heading"
+                  className="text-lg font-semibold text-slate-950"
+                >
+                  {isTamil ? "சுகாதார அளவீடுகள்" : "Health observations"}
+                </h2>
+                <button
+                  type="button"
+                  onClick={loadAllFhirData}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-teal-800 hover:bg-teal-50 disabled:opacity-60"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                    aria-hidden="true"
+                  />
+                  {isTamil ? "புதுப்பி" : "Refresh"}
+                </button>
+              </div>
+              {observationGroups.length > 0 ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {observationGroups.map((metric) => {
+                    const expanded = Boolean(expandedTrends[metric.key]);
+                    const statusClass =
+                      metric.status === "Normal"
+                        ? "bg-emerald-50 text-emerald-800"
+                        : metric.status === "Not specified"
+                        ? "bg-slate-100 text-slate-700"
+                        : "bg-amber-50 text-amber-900";
+                    return (
+                      <article
+                        key={metric.key}
+                        className="rounded-lg border border-slate-200 bg-white p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="font-semibold text-slate-950">{metric.name}</h3>
+                            <p className="mt-1 text-xl font-semibold text-slate-900">
+                              {metric.latest?.valueQuantity
+                                ? `${metric.latest.valueQuantity.value ?? ""} ${
+                                    metric.latest.valueQuantity.unit || ""
+                                  }`.trim()
+                                : metric.latest?.valueString || "—"}
+                            </p>
+                            {metric.latest?.referenceRange?.[0]?.text && (
+                              <p className="mt-1 text-sm text-slate-600">
+                                {isTamil ? "குறிப்பு வரம்பு" : "Reference range"}:{" "}
+                                {metric.latest.referenceRange[0].text}
+                              </p>
+                            )}
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusClass}`}>
+                            {metric.status === "Normal"
+                              ? isTamil
+                                ? "இயல்பு"
+                                : "Normal"
+                              : metric.status === "High"
+                              ? isTamil
+                                ? "அதிகம்"
+                                : "High"
+                              : metric.status === "Low"
+                              ? isTamil
+                                ? "குறைவு"
+                                : "Low"
+                              : isTamil
+                              ? "குறிப்பிடப்படவில்லை"
+                              : "Not specified"}
+                          </span>
+                        </div>
+                        {metric.latest?.effectiveDateTime && (
+                          <p className="mt-2 text-xs text-slate-500">
+                            {formatPatientDate(metric.latest.effectiveDateTime)}
+                          </p>
+                        )}
+                        {metric.history.length > 1 && (
+                          <div className="mt-3 border-t border-slate-100 pt-2">
+                            <button
+                              type="button"
+                              aria-expanded={expanded}
+                              onClick={() =>
+                                setExpandedTrends((current) => ({
+                                  ...current,
+                                  [metric.key]: !current[metric.key],
+                                }))
+                              }
+                              className="inline-flex items-center gap-1 text-sm font-semibold text-teal-800 hover:text-teal-950"
+                            >
+                              {expanded
+                                ? isTamil
+                                  ? "போக்கை மறை"
+                                  : "Hide trend"
+                                : isTamil
+                                ? "போக்கைப் பார்க்க"
+                                : "View trend"}
+                              <ChevronDown
+                                className={`h-4 w-4 transition-transform ${
+                                  expanded ? "rotate-180" : ""
+                                }`}
+                                aria-hidden="true"
+                              />
+                            </button>
+                            {expanded && (
+                              <ol className="mt-2 space-y-2 border-l border-slate-200 pl-3">
+                                {metric.history.map((item) => (
+                                  <li key={item.id} className="flex justify-between gap-3 text-sm">
+                                    <span className="text-slate-700">
+                                      {item.valueQuantity
+                                        ? `${item.valueQuantity.value ?? ""} ${
+                                            item.valueQuantity.unit || ""
+                                          }`.trim()
+                                        : item.valueString || "—"}
+                                    </span>
+                                    <time className="shrink-0 text-slate-500">
+                                      {formatPatientDate(item.effectiveDateTime)}
+                                    </time>
+                                  </li>
+                                ))}
+                              </ol>
+                            )}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                  {isTamil ? "பரிசோதனை முடிவுகள் எதுவும் இல்லை." : "No health observations are available yet."}
+                </p>
+              )}
+            </section>
+
+            <section aria-labelledby="medications-heading">
+              <h2
+                id="medications-heading"
+                className="mb-3 text-lg font-semibold text-slate-950"
+              >
+                {isTamil ? "தற்போதைய மருந்துகள்" : "Current medications"}
+              </h2>
+              {medications.filter((medication) => medication.status?.toLowerCase() === "active").length > 0 ? (
+                <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white px-4">
+                  {medications
+                    .filter((medication) => medication.status?.toLowerCase() === "active")
+                    .map((medication) => {
+                      const instruction = medication.dosageInstruction?.[0];
+                      return (
+                        <article key={medication.id} className="flex gap-3 py-4">
+                          <Pill className="mt-0.5 h-5 w-5 shrink-0 text-teal-800" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <h3 className="font-semibold text-slate-950">
+                              {medication.medicationCodeableConcept?.text ||
+                                (isTamil ? "மருந்து" : "Medication")}
+                            </h3>
+                            {instruction?.text && (
+                              <p className="mt-1 text-sm text-slate-700">{instruction.text}</p>
+                            )}
+                            {instruction?.patientInstruction && (
+                              <p className="mt-1 text-sm text-slate-600">
+                                {instruction.patientInstruction}
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                              {medication.requester?.display && (
+                                <span>
+                                  {isTamil ? "மருத்துவர்" : "Prescribed by"}:{" "}
+                                  {medication.requester.display}
+                                </span>
+                              )}
+                              {medication.authoredOn && (
+                                <span>
+                                  {isTamil ? "தேதி" : "Prescription date"}:{" "}
+                                  {formatPatientDate(medication.authoredOn)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                  {isTamil ? "செயலில் உள்ள மருந்துகள் பதிவு செய்யப்படவில்லை." : "No active medications are listed."}
+                </p>
+              )}
+            </section>
+
+            <section aria-labelledby="conditions-heading">
+              <h2
+                id="conditions-heading"
+                className="mb-3 text-lg font-semibold text-slate-950"
+              >
+                {isTamil ? "பதிவுசெய்யப்பட்ட நிலைகள்" : "Recorded conditions"}
+              </h2>
+              {conditions.length > 0 ? (
+                <ul className="flex flex-wrap gap-2">
+                  {conditions.map((condition) => (
+                    <li
+                      key={condition.id}
+                      className="inline-flex flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium text-slate-900">
+                        {condition.code?.text || (isTamil ? "நிலை" : "Condition")}
+                      </span>
+                      {condition.clinicalStatus?.text && (
+                        <span className="text-xs text-slate-600">
+                          {condition.clinicalStatus.text}
+                        </span>
+                      )}
+                      {condition.verificationStatus?.text && (
+                        <span className="text-xs text-slate-500">
+                          {condition.verificationStatus.text}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                  {isTamil ? "பதிவுசெய்யப்பட்ட நிலைகள் இல்லை." : "No conditions are listed in your records."}
+                </p>
+              )}
+            </section>
+
+            <section aria-labelledby="timeline-heading">
+              <h2
+                id="timeline-heading"
+                className="mb-3 text-lg font-semibold text-slate-950"
+              >
+                {isTamil ? "வருகைகள் மற்றும் பதிவுகள்" : "Visits & records"}
+              </h2>
+              {visitsAndRecords.length > 0 ? (
+                <ol className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white px-4">
+                  {visitsAndRecords.map((item) => (
+                    <li
+                      key={item.key}
+                      className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="flex min-w-0 gap-3">
+                        <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-teal-800" aria-hidden="true" />
+                        <div className="min-w-0">
+                          <h3 className="truncate font-medium text-slate-950">{item.title}</h3>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-600">
+                            {item.date && <span>{formatPatientDate(item.date)}</span>}
+                            {item.clinician && <span>{item.clinician}</span>}
+                            {item.facility && <span>{item.facility}</span>}
+                          </div>
+                        </div>
+                      </div>
+                      {item.downloadUrl && (
+                        <a
+                          href={formatDownloadUrl(item.downloadUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-teal-800 transition hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600"
+                        >
+                          <FileDown className="h-4 w-4" aria-hidden="true" />
+                          {isTamil ? "PDF பதிவிறக்கு" : "Download PDF"}
+                        </a>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                  {isTamil ? "வருகைகள் அல்லது பதிவுகள் இன்னும் இல்லை." : "No visits or records are available yet."}
+                </p>
+              )}
+            </section>
+
+            <p className="border-t border-slate-200 pt-4 text-xs text-slate-500">
+              {isTamil
+                ? "உங்கள் மருத்துவப் பதிவுகளிலிருந்து கிடைக்கும் தகவல்கள் இங்கே காட்டப்படுகின்றன."
+                : "This overview shows information available in your health records."}
+            </p>
           </div>
         )}
       </div>

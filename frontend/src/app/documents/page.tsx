@@ -1,168 +1,176 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import {
-  MedicalDocument,
-  DocumentTypeEnum,
-  getDocumentsApi,
-  uploadDocumentApi,
   deleteDocumentApi,
+  DocumentTypeEnum,
   getDocumentPreviewUrl,
+  getDocumentsApi,
+  MedicalDocument,
+  uploadDocumentApi,
 } from "@/lib/api";
 import {
-  FileText,
-  UploadCloud,
-  Trash2,
-  Eye,
-  Download,
   AlertCircle,
-  AlertTriangle,
+  ArrowRight,
   CheckCircle2,
-  Clock,
-  Filter,
-  Search,
-  X,
-  RefreshCw,
-  FileCheck,
-  FileSpreadsheet,
-  File,
-  Shield,
-  ExternalLink,
-  Sparkles,
+  Clock3,
+  Download,
+  Eye,
+  FileText,
   FlaskConical,
+  LoaderCircle,
+  Search,
+  Trash2,
+  UploadCloud,
+  X,
 } from "lucide-react";
-import { useLanguage } from "@/lib/language-context";
 
-const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB
+const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const ALLOWED_EXTS = [".pdf", ".jpg", ".jpeg", ".png"];
+
+const documentTypeLabels: Record<DocumentTypeEnum, string> = {
+  PRESCRIPTION: "Prescription",
+  LAB_REPORT: "Lab Report",
+  DIAGNOSTIC_REPORT: "Medical Report",
+  DISCHARGE_SUMMARY: "Discharge Summary",
+  OTHER: "Other",
+  UNKNOWN: "Other",
+};
+
+function statusForDocument(status: string) {
+  switch (status.toUpperCase()) {
+    case "COMPLETED":
+    case "EXTRACTED":
+    case "INTERPRETED":
+      return {
+        label: "Processed",
+        className: "bg-emerald-50 text-emerald-800",
+        icon: CheckCircle2,
+      };
+    case "PROCESSING":
+      return {
+        label: "Processing",
+        className: "bg-sky-50 text-sky-800",
+        icon: Clock3,
+      };
+    case "UPLOADED":
+      return {
+        label: "Uploaded",
+        className: "bg-slate-100 text-slate-700",
+        icon: Clock3,
+      };
+    case "LOW_CONFIDENCE":
+      return {
+        label: "Needs review",
+        className: "bg-amber-50 text-amber-900",
+        icon: AlertCircle,
+      };
+    case "FAILED":
+      return {
+        label: "Processing failed",
+        className: "bg-rose-50 text-rose-800",
+        icon: AlertCircle,
+      };
+    default:
+      return {
+        label: "Uploaded",
+        className: "bg-slate-100 text-slate-700",
+        icon: Clock3,
+      };
+  }
+}
+
+function formatUploadDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date not available";
+  return new Intl.DateTimeFormat("en", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
 
 export default function DocumentsPage() {
   const { user, token, isLoading } = useAuth();
-  const { language, isTamil, t } = useLanguage();
   const router = useRouter();
-
-  // Document state
   const [documents, setDocuments] = useState<MedicalDocument[]>([]);
-  const [isLoadingDocs, setIsLoadingDocs] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
-  // Upload state
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [docType, setDocType] = useState<DocumentTypeEnum>("PRESCRIPTION");
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [isUploading, setIsUploading] = useState<boolean>(false);
-  const [isDragOver, setIsDragOver] = useState<boolean>(false);
+  const [documentType, setDocumentType] = useState<DocumentTypeEnum>("UNKNOWN");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState("ALL");
+  const [previewDocument, setPreviewDocument] = useState<MedicalDocument | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Filter & Search
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [filterType, setFilterType] = useState<string>("ALL");
-
-  // Preview Modal
-  const [previewDoc, setPreviewDoc] = useState<MedicalDocument | null>(null);
-
-  // Delete Confirmation
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  // Authentication Guard
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push("/login");
-    }
+    if (!isLoading && !user) router.push("/login");
   }, [isLoading, user, router]);
 
-  // Load documents
   const loadDocuments = async () => {
     if (!token) return;
     setIsLoadingDocs(true);
-    setError(null);
+    setLoadFailed(false);
     try {
-      const docs = await getDocumentsApi(token);
-      setDocuments(docs);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load documents.";
-      setError(msg);
+      setDocuments(await getDocumentsApi(token));
+    } catch {
+      setLoadFailed(true);
     } finally {
       setIsLoadingDocs(false);
     }
   };
 
   useEffect(() => {
-    if (token) {
-      loadDocuments();
-    }
+    if (token) void loadDocuments();
   }, [token]);
 
-  // File validation helper
-  const validateFile = (file: File): string | null => {
-    const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (!ALLOWED_EXTS.includes(ext)) {
-      return `Invalid format '${ext}'. Only PDF, JPG, JPEG, and PNG files are supported.`;
+  const selectFile = (file: File) => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
+    if (!ALLOWED_EXTS.includes(extension)) {
+      setErrorMessage("Choose a PDF, JPG or PNG file.");
+      setSelectedFile(null);
+      return;
     }
     if (file.size > MAX_FILE_SIZE) {
-      return `File size ${(file.size / (1024 * 1024)).toFixed(1)} MB exceeds maximum limit of 15 MB.`;
-    }
-    return null;
-  };
-
-  const handleFileSelection = (file: File) => {
-    setError(null);
-    setSuccessMsg(null);
-    const validationError = validateFile(file);
-    if (validationError) {
-      setError(validationError);
+      setErrorMessage("This file is larger than 15 MB. Choose a smaller file.");
       setSelectedFile(null);
       return;
     }
     setSelectedFile(file);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileSelection(e.dataTransfer.files[0]);
-    }
-  };
-
   const handleUpload = async () => {
     if (!selectedFile || !token) return;
     setIsUploading(true);
     setUploadProgress(0);
-    setError(null);
-    setSuccessMsg(null);
+    setErrorMessage(null);
+    setSuccessMessage(null);
 
     try {
-      const newDoc = await uploadDocumentApi(
+      const document = await uploadDocumentApi(
         selectedFile,
-        docType,
+        documentType,
         token,
-        (percent) => setUploadProgress(percent)
+        setUploadProgress
       );
-      setDocuments((prev) => [newDoc, ...prev]);
-      setSuccessMsg(`"${newDoc.original_filename}" uploaded successfully.`);
+      setDocuments((current) => [document, ...current]);
+      setSuccessMessage("Your document has been uploaded.");
       setSelectedFile(null);
       setUploadProgress(0);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Upload failed.";
-      setError(msg);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch {
+      setErrorMessage("We couldn't process this document. Please try again or upload a clearer image.");
     } finally {
       setIsUploading(false);
     }
@@ -173,557 +181,439 @@ export default function DocumentsPage() {
     setDeletingId(id);
     try {
       await deleteDocumentApi(id, token);
-      setDocuments((prev) => prev.filter((d) => d.id !== id));
-      if (previewDoc?.id === id) {
-        setPreviewDoc(null);
-      }
-      setSuccessMsg("Document deleted successfully.");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete document.";
-      setError(msg);
+      setDocuments((current) => current.filter((document) => document.id !== id));
+      if (previewDocument?.id === id) setPreviewDocument(null);
+      setSuccessMessage("Document removed.");
+    } catch {
+      setErrorMessage("We couldn't remove this document. Please try again.");
     } finally {
       setDeletingId(null);
     }
   };
 
-  // Helper formatting
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "UPLOADED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
-            <Clock className="w-3 h-3" />
-            {t("status", "UPLOADED", "Uploaded")}
-          </span>
-        );
-      case "PROCESSING":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
-            <RefreshCw className="w-3 h-3 animate-spin" />
-            {t("status", "PROCESSING", "Processing")}
-          </span>
-        );
-      case "COMPLETED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-3 h-3" />
-            {t("status", "COMPLETED", "Completed")}
-          </span>
-        );
-      case "LOW_CONFIDENCE":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-            <AlertTriangle className="w-3 h-3 text-amber-600" />
-            {t("status", "LOW_CONFIDENCE", "Low Confidence")}
-          </span>
-        );
-      case "FAILED":
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-            <AlertCircle className="w-3 h-3" />
-            {t("status", "FAILED", "Failed")}
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700">
-            {t("status", status, status)}
-          </span>
-        );
-    }
-  };
-
-  const getTypeBadge = (type: string) => {
-    switch (type) {
-      case "PRESCRIPTION":
-        return (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200">
-            {t("documents", "filter_prescriptions", "Prescription")}
-          </span>
-        );
-      case "LAB_REPORT":
-        return (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-teal-50 text-teal-700 border border-teal-200">
-            {t("documents", "filter_lab", "Lab Report")}
-          </span>
-        );
-      case "DIAGNOSTIC_REPORT":
-        return (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
-            {t("documents", "filter_diagnostic", "Diagnostic Report")}
-          </span>
-        );
-      case "DISCHARGE_SUMMARY":
-        return (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
-            {t("documents", "filter_discharge", "Discharge Summary")}
-          </span>
-        );
-      default:
-        return (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-700">
-            {type.replace("_", " ")}
-          </span>
-        );
-    }
-  };
-
-  // Filtered documents
-  const filteredDocuments = documents.filter((doc) => {
-    const matchesSearch = doc.original_filename
+  const filteredDocuments = documents.filter((document) => {
+    const matchesSearch = document.original_filename
       .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    const matchesType =
-      filterType === "ALL" || doc.document_type === filterType;
+      .includes(searchQuery.trim().toLowerCase());
+    const matchesType = filterType === "ALL" || document.document_type === filterType;
     return matchesSearch && matchesType;
   });
 
   if (isLoading || !user) {
     return (
-      <div className="min-h-[calc(100vh-16rem)] flex items-center justify-center">
-        <RefreshCw className="w-6 h-6 animate-spin text-teal-600" />
+      <div className="flex min-h-64 items-center justify-center" aria-busy="true">
+        <LoaderCircle className="h-6 w-6 animate-spin text-teal-800" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            {t("documents", "title", "Medical Documents & Records")}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {isTamil
-              ? `${user.full_name} அவர்களுக்கான மறைகுறியாக்கப்பட்ட மருத்துவப் பதிவுக் காப்பகம்`
-              : `Encrypted personal health record storage for ${user.full_name}`}
-          </p>
-        </div>
+    <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:py-8">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-950">
+          My Medical Records
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Upload and manage your health documents in one place.
+        </p>
+      </header>
 
-        <div className="flex items-center gap-2">
-          <Link
-            href="/lab"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 shadow-sm transition-colors"
-          >
-            <FlaskConical className="w-3.5 h-3.5" />
-            <span>{t("nav", "lab", "Lab Dashboard")}</span>
-          </Link>
-
+      {errorMessage && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <div className="flex-1">
+            <p>{errorMessage}</p>
+            {selectedFile && !isUploading && (
+              <button
+                type="button"
+                onClick={() => void handleUpload()}
+                className="mt-2 inline-flex items-center gap-1 font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-800"
+              >
+                Try again <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            )}
+          </div>
           <button
-            onClick={loadDocuments}
-            disabled={isLoadingDocs}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm transition-colors"
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            aria-label="Dismiss error"
+            className="rounded p-1 text-rose-700 hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-800"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDocs ? "animate-spin text-teal-600" : ""}`} />
-            <span>{t("common", "refresh", "Refresh Records")}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Notifications */}
-      {error && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-3 text-xs text-rose-800">
-          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1 leading-relaxed">{error}</div>
-          <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-600">
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
       )}
 
-      {successMsg && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start gap-3 text-xs text-emerald-800">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-          <div className="flex-1 leading-relaxed">{successMsg}</div>
-          <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-emerald-600">
-            <X className="w-4 h-4" />
+      {loadFailed && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"
+        >
+          <span>We couldn&apos;t load your documents. Please try again.</span>
+          <button
+            type="button"
+            onClick={() => void loadDocuments()}
+            className="shrink-0 font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-800"
+          >
+            Try again
           </button>
         </div>
       )}
 
-      {/* Section 1: Drag-and-Drop Upload Area */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 p-6 sm:p-8 shadow-sm space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+      {successMessage && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {successMessage}
+        </div>
+      )}
+
+      <section
+        aria-labelledby="upload-heading"
+        className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">{t("upload", "modal_title", "Upload Clinical Document")}</h2>
-            <p className="text-xs text-slate-500">
-              {t("upload", "dropzone_subtitle", "Supports PDF, PNG, JPG, or JPEG up to 15MB")}
+            <h2 id="upload-heading" className="text-base font-semibold text-slate-950">
+              Add a medical record
+            </h2>
+            <p className="mt-0.5 text-sm text-slate-600">
+              Upload a prescription, lab report, scan or medical document.
             </p>
           </div>
-
-          {/* Document Type Selector */}
           <div className="flex items-center gap-2">
-            <label className="text-xs font-semibold text-slate-600">{t("upload", "doc_type_label", "Type")}:</label>
+            <label htmlFor="document-type" className="text-sm text-slate-600">
+              Document type
+            </label>
             <select
-              value={docType}
-              onChange={(e) => setDocType(e.target.value as DocumentTypeEnum)}
-              className="px-3 py-1.5 text-xs font-semibold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 bg-white text-slate-900"
+              id="document-type"
+              value={documentType}
+              onChange={(event) => setDocumentType(event.target.value as DocumentTypeEnum)}
+              disabled={isUploading}
+              className="min-h-9 max-w-48 rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-700"
             >
-              <option value="PRESCRIPTION">{t("documents", "filter_prescriptions", "Prescription")}</option>
-              <option value="LAB_REPORT">{t("documents", "filter_lab", "Lab Report")}</option>
-              <option value="DIAGNOSTIC_REPORT">{t("documents", "filter_diagnostic", "Diagnostic Report")}</option>
-              <option value="DISCHARGE_SUMMARY">{t("documents", "filter_discharge", "Discharge Summary")}</option>
-              <option value="OTHER">{isTamil ? "பிற ஆவணங்கள்" : "Other Clinical Document"}</option>
-              <option value="UNKNOWN">{isTamil ? "வகைப்படுத்தப்படாதது" : "Unclassified"}</option>
+              <option value="UNKNOWN">Select document type</option>
+              <option value="PRESCRIPTION">Prescription</option>
+              <option value="LAB_REPORT">Lab Report</option>
+              <option value="DIAGNOSTIC_REPORT">Medical Report</option>
+              <option value="DISCHARGE_SUMMARY">Discharge Summary</option>
+              <option value="OTHER">Other</option>
             </select>
           </div>
         </div>
 
-        {/* Dropzone Container */}
         <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-2xl p-8 sm:p-10 text-center cursor-pointer transition-all ${
+          role="button"
+          tabIndex={isUploading ? -1 : 0}
+          aria-label="Choose or drop a medical document"
+          aria-disabled={isUploading}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              if (!isUploading) fileInputRef.current?.click();
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            if (!isUploading) setIsDragOver(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            setIsDragOver(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragOver(false);
+            if (!isUploading && event.dataTransfer.files.length > 0) {
+              selectFile(event.dataTransfer.files[0]);
+            }
+          }}
+          onClick={() => {
+            if (!isUploading) fileInputRef.current?.click();
+          }}
+          className={`mt-4 flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-5 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 ${
             isDragOver
-              ? "border-teal-500 bg-teal-50/50 scale-[1.005]"
+              ? "border-teal-700 bg-teal-50"
               : selectedFile
-              ? "border-emerald-400 bg-emerald-50/30"
-              : "border-slate-300 hover:border-teal-400 bg-slate-50/50"
-          }`}
+              ? "border-emerald-400 bg-emerald-50/50"
+              : "border-slate-300 bg-slate-50/60 hover:border-teal-500 hover:bg-teal-50/40"
+          } ${isUploading ? "cursor-wait opacity-70" : ""}`}
         >
           <input
-            type="file"
             ref={fileInputRef}
-            onChange={(e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                handleFileSelection(e.target.files[0]);
-              }
-            }}
+            type="file"
             accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+            disabled={isUploading}
             className="hidden"
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              if (event.target.files?.[0]) selectFile(event.target.files[0]);
+            }}
           />
-
-          <div className="space-y-3">
-            <div
-              className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center ${
-                selectedFile
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-teal-50 text-teal-600 border border-teal-200/80"
-              }`}
-            >
-              <UploadCloud className="w-7 h-7" />
-            </div>
-
-            {selectedFile ? (
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-slate-900 flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>{selectedFile.name}</span>
-                </p>
-                <p className="text-xs text-slate-500">
-                  {isTamil ? "பதிவேற்றத் தயார்" : "Ready to upload"} &bull; {t("common", "observed_value", "Size")}: {formatBytes(selectedFile.size)} &bull; {docType}
-                </p>
-                <p className="text-[11px] text-teal-600 underline pt-1">
-                  {isTamil ? "வேறு கோப்பைத் தேர்ந்தெடுக்க கிளிக் செய்க" : "Click to select a different file"}
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-slate-800">
-                  {t("upload", "dropzone_title", "Drag & drop your medical record here")},{" "}
-                  <span className="text-teal-600 underline font-bold">{t("upload", "browse", "browse your computer")}</span>
-                </p>
-                <p className="text-xs text-slate-500">
-                  {isTamil ? "ம MIME சரிபார்ப்புடன் பாதுகாப்பான உள்ளூர் சேமிப்பகம் • அதிகபட்சம் 15MB" : "Secure local volume ingestion with MIME header verification • Max 15MB"}
-                </p>
-              </div>
-            )}
-          </div>
+          <UploadCloud className="h-6 w-6 text-teal-800" aria-hidden="true" />
+          {selectedFile ? (
+            <>
+              <p className="mt-2 max-w-full truncate text-sm font-medium text-slate-900">
+                {selectedFile.name}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {isUploading
+                  ? "Processing your document..."
+                  : `Ready to upload · ${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm font-medium text-slate-900">
+                Drag &amp; drop your file here
+              </p>
+              <p className="mt-0.5 text-sm text-slate-600">
+                or <span className="font-semibold text-teal-800 underline underline-offset-2">Browse files</span>
+              </p>
+              <p className="mt-2 text-xs text-slate-500">PDF, JPG, PNG · Maximum file size: 15 MB</p>
+            </>
+          )}
         </div>
 
-        {/* Upload Action Bar & Progress Indicator */}
-        {selectedFile && (
-          <div className="space-y-4 pt-2">
-            {isUploading && (
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs font-semibold text-slate-700">
-                  <span>{t("upload", "uploading", "Uploading securely...")}</span>
-                  <span>{uploadProgress}%</span>
-                </div>
-                <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                  <div
-                    className="h-full bg-teal-600 transition-all duration-300 rounded-full"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center justify-end gap-3">
-              <button
-                type="button"
-                disabled={isUploading}
-                onClick={() => {
-                  setSelectedFile(null);
-                  if (fileInputRef.current) fileInputRef.current.value = "";
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                {t("common", "cancel", "Cancel")}
-              </button>
-              <button
-                type="button"
-                disabled={isUploading}
-                onClick={handleUpload}
-                className="px-6 py-2.5 rounded-xl text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 shadow-sm shadow-teal-600/30 transition-all disabled:opacity-50"
-              >
-                {isUploading ? (isTamil ? "பதிவேற்றுகிறது..." : "Uploading File...") : (isTamil ? "ஆவணத்தை உறுதிசெய்து சேமிக்கவும்" : "Confirm & Save Document")}
-              </button>
+        {isUploading && (
+          <div className="mt-3" role="status" aria-live="polite">
+            <div className="flex justify-between text-xs text-slate-600">
+              <span>Processing your document...</span>
+              <span>{uploadProgress}%</span>
+            </div>
+            <div
+              className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={uploadProgress}
+            >
+              <div
+                className="h-full rounded-full bg-teal-700 transition-[width]"
+                style={{ width: `${uploadProgress}%` }}
+              />
             </div>
           </div>
         )}
 
-        <div className="flex items-center gap-2 text-[11px] text-slate-400 pt-2 border-t border-slate-100">
-          <Shield className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-          <span>{isTamil ? "கோப்புகள் பாதுகாப்பான டோக்கர் சேமிப்பகத்தில் தனிமைப்படுத்தப்பட்டுள்ளன." : "Files are quarantined in isolated Docker storage. Raw file paths are never exposed to clients."}</span>
-        </div>
-      </div>
-
-      {/* Section 2: Document List & Filtering */}
-      <div className="space-y-4">
-        {/* Search & Filter Toolbar */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder={t("documents", "search_placeholder", "Search documents by name...")}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-3.5 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 bg-white text-slate-900"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-400" />
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
-              className="px-3 py-2 text-xs font-semibold rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 bg-white text-slate-900"
+        {selectedFile && !isUploading && (
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+              className="min-h-9 rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
             >
-              <option value="ALL">{t("documents", "filter_all", "All Documents")} ({documents.length})</option>
-              <option value="PRESCRIPTION">{t("documents", "filter_prescriptions", "Prescriptions")}</option>
-              <option value="LAB_REPORT">{t("documents", "filter_lab", "Lab Reports")}</option>
-              <option value="DIAGNOSTIC_REPORT">{t("documents", "filter_diagnostic", "Diagnostic Reports")}</option>
-              <option value="DISCHARGE_SUMMARY">{t("documents", "filter_discharge", "Discharge Summaries")}</option>
-              <option value="OTHER">{isTamil ? "பிற ஆவணங்கள்" : "Other"}</option>
-            </select>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleUpload()}
+              className="inline-flex min-h-9 items-center gap-2 rounded-md bg-teal-800 px-4 text-sm font-semibold text-white transition hover:bg-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2"
+            >
+              <UploadCloud className="h-4 w-4" aria-hidden="true" />
+              Upload Document
+            </button>
           </div>
+        )}
+      </section>
+
+      <section aria-labelledby="documents-heading">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="documents-heading" className="text-lg font-semibold text-slate-950">
+            My Documents
+          </h2>
+          {documents.length > 0 && (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <label className="relative min-w-0 flex-1 sm:w-64">
+                <span className="sr-only">Search documents</span>
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  placeholder="Search documents"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className="min-h-9 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                />
+              </label>
+              <label>
+                <span className="sr-only">Filter by document type</span>
+                <select
+                  value={filterType}
+                  onChange={(event) => setFilterType(event.target.value)}
+                  className="min-h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-700 sm:w-auto"
+                >
+                  <option value="ALL">All types</option>
+                  <option value="PRESCRIPTION">Prescriptions</option>
+                  <option value="LAB_REPORT">Lab Reports</option>
+                  <option value="DIAGNOSTIC_REPORT">Medical Reports</option>
+                  <option value="DISCHARGE_SUMMARY">Discharge Summaries</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
 
-        {/* Documents Grid */}
         {isLoadingDocs ? (
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center">
-            <RefreshCw className="w-6 h-6 animate-spin text-teal-600 mx-auto mb-2" />
-            <p className="text-xs text-slate-500 font-semibold">{t("common", "loading", "Loading patient records...")}</p>
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+            <LoaderCircle className="h-4 w-4 animate-spin text-teal-800" aria-hidden="true" />
+            Loading your documents…
           </div>
-        ) : filteredDocuments.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-12 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-              <FileText className="w-6 h-6" />
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-sm font-bold text-slate-900">
-                {searchQuery || filterType !== "ALL"
-                  ? (isTamil ? "பொருந்தக்கூடிய ஆவணங்கள் எதுவும் இல்லை" : "No matching documents found")
-                  : (isTamil ? "மருத்துவ ஆவணங்கள் எதுவும் பதிவேற்றப்படவில்லை" : "No medical documents uploaded yet")}
-              </h3>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {searchQuery || filterType !== "ALL"
-                  ? (isTamil ? "அனைத்து ஆவணங்களையும் காண தேடல் வடிப்பானை மீட்டமைக்கவும்." : "Try resetting your search filter to display all documents.")
-                  : (isTamil ? "உங்கள் ஒருங்கிணைந்த மருத்துவ களஞ்சியத்தை நிரப்ப உங்கள் மருந்துச்சீட்டுகள் அல்லது ஆய்வக முடிவுகளை மேலே பதிவேற்றவும்." : "Upload your prescriptions or lab results above to populate your unified medical repository.")}
-              </p>
-            </div>
+        ) : documents.length === 0 && !loadFailed ? (
+          <div className="mt-3 flex flex-col items-center rounded-lg border border-slate-200 bg-white px-4 py-7 text-center">
+            <FileText className="h-7 w-7 text-slate-500" aria-hidden="true" />
+            <p className="mt-2 text-sm font-medium text-slate-900">No medical records yet</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Upload a prescription, lab report or medical document to get started.
+            </p>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md bg-teal-800 px-3 text-sm font-semibold text-white transition hover:bg-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2"
+            >
+              <UploadCloud className="h-4 w-4" aria-hidden="true" />
+              Upload Document
+            </button>
           </div>
+        ) : documents.length > 0 && filteredDocuments.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+            No documents match your search. Try a different name or type.
+          </p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredDocuments.map((doc) => {
-              const isPdf = doc.mime_type.includes("pdf");
+          <div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
+            {filteredDocuments.map((document) => {
+              const status = statusForDocument(document.processing_status);
+              const StatusIcon = status.icon;
+              const TypeIcon =
+                document.document_type === "LAB_REPORT" ? FlaskConical : FileText;
               return (
                 <div
-                  key={doc.id}
-                  className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-sm hover:shadow-md hover:border-teal-300 transition-all flex flex-col justify-between space-y-4"
+                  key={document.id}
+                  className="flex min-w-0 items-center gap-3 px-3 py-3 transition hover:bg-slate-50 sm:px-4"
                 >
-                  <div className="space-y-3">
-                    {/* Header info */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                            isPdf
-                              ? "bg-rose-50 text-rose-600 border border-rose-200"
-                              : "bg-blue-50 text-blue-600 border border-blue-200"
-                          }`}
-                        >
-                          {isPdf ? (
-                            <FileText className="w-5 h-5" />
-                          ) : (
-                            <FileCheck className="w-5 h-5" />
-                          )}
-                        </div>
-                        <div className="overflow-hidden">
-                          <h4
-                            title={doc.original_filename}
-                            className="text-xs font-bold text-slate-900 truncate max-w-[180px]"
-                          >
-                            {doc.original_filename}
-                          </h4>
-                          <span className="text-[11px] text-slate-400 font-mono">
-                            {formatBytes(doc.file_size)} &bull; {doc.mime_type.split("/")[1]?.toUpperCase()}
-                          </span>
-                        </div>
-                      </div>
-
-                      {getStatusBadge(doc.processing_status)}
-                    </div>
-
-                    {/* Metadata tags */}
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      {getTypeBadge(doc.document_type)}
-                      <span className="text-[11px] text-slate-400">
-                        {t("documents", "th_date", "Date Added")}: {new Date(doc.upload_date).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions row */}
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => setPreviewDoc(doc)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>{t("common", "view", "Preview")}</span>
-                      </button>
-
-                      <Link
-                        href={`/documents/${doc.id}`}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 transition-colors"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-teal-600" />
-                        <span>{t("documents", "extract_ai", "OCR Details")}</span>
-                      </Link>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {token && (
-                        <a
-                          href={getDocumentPreviewUrl(doc.id, token)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          download={doc.original_filename}
-                          title={t("common", "download", "Download document")}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
-                        >
-                          <Download className="w-4 h-4" />
-                        </a>
-                      )}
-
-                      <button
-                        onClick={() => handleDelete(doc.id)}
-                        disabled={deletingId === doc.id}
-                        title={t("common", "delete", "Delete document")}
-                        className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors disabled:opacity-50"
-                      >
-                        <Trash2 className={`w-4 h-4 ${deletingId === doc.id ? "animate-spin" : ""}`} />
-                      </button>
-                    </div>
-                  </div>
+                  <span className="shrink-0 rounded-md bg-slate-100 p-2 text-slate-700">
+                    <TypeIcon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <Link
+                    href={`/documents/${document.id}`}
+                    className="min-w-0 flex-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
+                  >
+                    <span className="block truncate text-sm font-medium text-slate-950">
+                      {document.original_filename}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-600">
+                      {documentTypeLabels[document.document_type]} · {formatUploadDate(document.upload_date)}
+                    </span>
+                  </Link>
+                  <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium sm:px-2.5 sm:text-xs ${status.className}`}>
+                    <StatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {status.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewDocument(document)}
+                    aria-label={`Preview ${document.original_filename}`}
+                    className="shrink-0 rounded-md p-2 text-slate-500 transition hover:bg-slate-100 hover:text-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
+                  >
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(document.id)}
+                    disabled={deletingId === document.id}
+                    aria-label={`Delete ${document.original_filename}`}
+                    className="shrink-0 rounded-md p-2 text-slate-500 transition hover:bg-rose-50 hover:text-rose-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-700 disabled:opacity-50"
+                  >
+                    {deletingId === document.id ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    )}
+                  </button>
+                  <Link
+                    href={`/documents/${document.id}`}
+                    aria-label={`View details for ${document.original_filename}`}
+                    className="shrink-0 rounded-md p-2 text-teal-800 transition hover:bg-teal-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
+                  >
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </Link>
                 </div>
               );
             })}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Section 3: Secure Document Preview Modal */}
-      {previewDoc && token && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6">
-          <div className="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <div className="flex items-center gap-3 overflow-hidden">
-                <FileText className="w-5 h-5 text-teal-600 shrink-0" />
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 truncate max-w-md">
-                    {previewDoc.original_filename}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    {t("documents", "th_type", "Type")}: {previewDoc.document_type} &bull; {t("common", "observed_value", "Size")}: {formatBytes(previewDoc.file_size)}
+      {previewDocument && token && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-3 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="document-preview-title"
+        >
+          <div className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg bg-white">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <FileText className="h-5 w-5 shrink-0 text-teal-800" aria-hidden="true" />
+                <div className="min-w-0">
+                  <h2 id="document-preview-title" className="truncate text-sm font-semibold text-slate-950">
+                    {previewDocument.original_filename}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    {documentTypeLabels[previewDocument.document_type]} · {formatUploadDate(previewDocument.upload_date)}
                   </p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2">
-                <a
-                  href={getDocumentPreviewUrl(previewDoc.id, token)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-xl text-slate-600 hover:bg-slate-200 transition-colors"
-                  title="Open in new window"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </a>
-                <button
-                  onClick={() => setPreviewDoc(null)}
-                  className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-200 transition-colors"
-                  title={t("common", "close", "Close preview")}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewDocument(null)}
+                aria-label="Close preview"
+                className="rounded-md p-2 text-slate-600 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 bg-slate-100 flex items-center justify-center p-2 overflow-auto">
-              {previewDoc.mime_type.includes("pdf") ? (
+            <div className="flex-1 overflow-auto bg-slate-100 p-2">
+              {previewDocument.mime_type.includes("pdf") ? (
                 <iframe
-                  src={getDocumentPreviewUrl(previewDoc.id, token)}
-                  className="w-full h-full rounded-lg border-0 shadow-inner bg-white"
-                  title="PDF Preview"
+                  src={getDocumentPreviewUrl(previewDocument.id, token)}
+                  title={`Preview of ${previewDocument.original_filename}`}
+                  className="h-full w-full rounded border-0 bg-white"
                 />
               ) : (
-                /* eslint-disable-next-line @next/next/no-img-element */
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={getDocumentPreviewUrl(previewDoc.id, token)}
-                  alt={previewDoc.original_filename}
-                  className="max-h-full max-w-full object-contain rounded-lg shadow-md"
+                  src={getDocumentPreviewUrl(previewDocument.id, token)}
+                  alt={previewDocument.original_filename}
+                  className="mx-auto max-h-full max-w-full object-contain"
                 />
               )}
             </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-3 border-t border-slate-200 bg-white flex items-center justify-between text-xs text-slate-500">
-              <span className="font-mono">UUID: {previewDoc.id}</span>
-              <div className="flex items-center gap-2">
-                <Link
-                  href={`/documents/${previewDoc.id}`}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold transition-colors shadow-sm"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-teal-400" />
-                  <span>{t("documents", "extract_ai", "View OCR Text")}</span>
-                </Link>
-                <a
-                  href={getDocumentPreviewUrl(previewDoc.id, token)}
-                  download={previewDoc.original_filename}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-semibold transition-colors shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{t("common", "download", "Download Original")}</span>
-                </a>
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
+              <Link
+                href={`/documents/${previewDocument.id}`}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-teal-800 px-3 text-sm font-semibold text-white transition hover:bg-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2"
+              >
+                View details <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Link>
+              <a
+                href={getDocumentPreviewUrl(previewDocument.id, token)}
+                download={previewDocument.original_filename}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700"
+              >
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Download
+              </a>
             </div>
           </div>
         </div>

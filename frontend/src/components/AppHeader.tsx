@@ -39,7 +39,7 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
     }
     if (pathname.startsWith("/documents")) {
       return {
-        title: isTamil ? "மருத்துவ ஆவணங்கள்" : "Medical Documents",
+        title: isTamil ? "எனது மருத்துவப் பதிவுகள்" : "My Medical Records",
         icon: FileText,
       };
     }
@@ -57,13 +57,13 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
     }
     if (pathname.startsWith("/summary")) {
       return {
-        title: isTamil ? "மருத்துவ சுருக்கம்" : "Clinical Health Summary",
+        title: isTamil ? "உங்கள் சுகாதார சுருக்கம்" : "Your Health Summary",
         icon: Sparkles,
       };
     }
     if (pathname.startsWith("/health-data") || pathname.startsWith("/fhir")) {
       return {
-        title: isTamil ? "FHIR R4 தரவுத்தளம்" : "FHIR R4 Health Records",
+        title: isTamil ? "சுகாதாரப் பதிவுகள்" : "Health Records",
         icon: Database,
       };
     }
@@ -77,6 +77,12 @@ export default function AppHeader({ onToggleSidebar }: AppHeaderProps) {
       return {
         title: isTamil ? "சுயவிவரம் & அமைப்புகள்" : "User Profile & Settings",
         icon: User,
+      };
+    }
+    if (pathname === "/dashboard" || pathname === "/") {
+      return {
+        title: isTamil ? "உங்கள் உடல்நலம்" : "Your health",
+        icon: LayoutDashboard,
       };
     }
     return {
